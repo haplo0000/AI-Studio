@@ -1,5 +1,19 @@
 const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron');
 const path = require('path');
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+]);
+
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -7,7 +21,6 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 const blacksmith = require('./blacksmith.cjs');
-const imageStudio = require('./imageStudio.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
   'C:\\AI\\StabilityMatrix\\Data\\Images',
@@ -31,18 +44,9 @@ function isAllowedMediaPath(filePath) {
   return ALLOWED_MEDIA_ROOTS.some((root) => normalized.toLowerCase().startsWith(root.toLowerCase()));
 }
 
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'media',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      bypassCSP: true,
-    },
-  },
-]);
+function getImageStudio() {
+  return require('./imageStudio.cjs');
+}
 
 function appendLog(level, source, message, meta = {}) {
   const line = JSON.stringify({
@@ -340,6 +344,21 @@ function createWindow() {
     console.error('[did-fail-load]', errorCode, errorDescription, validatedURL);
   });
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents
+      .executeJavaScript('typeof window.aiStudio')
+      .then((apiType) => {
+        if (apiType !== 'object') {
+          const message = 'Preload bridge missing after page load (window.aiStudio undefined)';
+          appendLog('error', 'preload', message, { url: mainWindow.webContents.getURL() });
+          console.error('[preload]', message);
+        }
+      })
+      .catch(() => {
+        // ignore probe failures
+      });
+  });
+
   if (isDevRuntime()) {
     mainWindow.loadURL(DEV_SERVER_URL);
   } else {
@@ -361,13 +380,17 @@ app.whenReady().then(() => {
     }
   });
 
-  imageStudio.registerImageStudioIpc(ipcMain, loadSettings, appendLog);
+  getImageStudio().registerImageStudioIpc(ipcMain, loadSettings, appendLog);
   appendLog('info', 'studio', 'AI Studio started (Phase 3.5 Image Studio)');
   createWindow();
 });
 
 app.on('will-quit', () => {
-  imageStudio.stopWatcher();
+  try {
+    getImageStudio().stopWatcher();
+  } catch {
+    // image studio module not loaded
+  }
 });
 
 app.on('window-all-closed', () => {

@@ -4,8 +4,11 @@ const http = require('http');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 const chokidar = require('chokidar');
-const Database = require('better-sqlite3');
-const { nativeImage, clipboard, shell } = require('electron');
+
+/** @type {typeof import('better-sqlite3') | null} */
+let Database = null;
+/** @type {import('better-sqlite3').Database | null} */
+let db = null;
 
 const HUB_ROOT = 'C:\\AI\\AIStudio';
 const DEFAULT_OUTPUT_ROOT = 'C:\\AI\\StabilityMatrix\\Data\\Images';
@@ -43,16 +46,25 @@ const ASPECT_DIMENSIONS = {
   'legion-wallpaper': { width: 2560, height: 1600 },
 };
 
-/** @type {import('better-sqlite3').Database | null} */
-let db = null;
 /** @type {import('chokidar').FSWatcher | null} */
 let watcher = null;
-/** @type {import('electron').BrowserWindow | null} */
+/** @type {import('electron').WebContents | null} */
 let notifyWindow = null;
 /** @type {Map<string, string>} */
 const thumbCache = new Map();
 /** @type {Map<string, object>} */
 const pendingGenerations = new Map();
+
+function getDatabaseModule() {
+  if (!Database) {
+    Database = require('better-sqlite3');
+  }
+  return Database;
+}
+
+function getElectronModule() {
+  return require('electron');
+}
 
 function ensureDirs() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -70,7 +82,8 @@ function getOutputRoot(settings) {
 function initDb() {
   ensureDirs();
   if (db) return db;
-  db = new Database(DB_PATH);
+  const Sqlite = getDatabaseModule();
+  db = new Sqlite(DB_PATH);
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS images (
@@ -363,6 +376,7 @@ function getStats(outputRoot) {
 function getThumbnailDataUrl(filePath, size = 256) {
   if (thumbCache.has(filePath)) return thumbCache.get(filePath);
   try {
+    const { nativeImage } = getElectronModule();
     const thumb = nativeImage.createThumbnailFromPath(filePath, { width: size, height: size });
     const dataUrl = thumb.toDataURL();
     if (thumbCache.size > 500) {
@@ -596,6 +610,7 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
   }));
 
   ipcMain.handle('image-studio:delete', async (_event, filePath) => {
+    const { shell } = getElectronModule();
     if (!fs.existsSync(filePath)) throw new Error('File not found');
     await shell.trashItem(filePath);
     removeImage(filePath);
@@ -604,27 +619,29 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
   });
 
   ipcMain.handle('image-studio:reveal', async (_event, filePath) => {
-    shell.showItemInFolder(filePath);
+    getElectronModule().shell.showItemInFolder(filePath);
     return { ok: true };
   });
 
   ipcMain.handle('image-studio:open-folder', async (_event, folderPath) => {
-    await shell.openPath(folderPath || getOutputRoot(loadSettings()));
+    await getElectronModule().shell.openPath(folderPath || getOutputRoot(loadSettings()));
     return { ok: true };
   });
 
   ipcMain.handle('image-studio:open-viewer', async (_event, filePath) => {
-    await shell.openPath(filePath);
+    await getElectronModule().shell.openPath(filePath);
     return { ok: true };
   });
 
   ipcMain.handle('image-studio:copy-image', async (_event, filePath) => {
+    const { nativeImage, clipboard } = getElectronModule();
     const img = nativeImage.createFromPath(filePath);
     clipboard.writeImage(img);
     return { ok: true };
   });
 
   ipcMain.handle('image-studio:copy-prompt', async (_event, filePath) => {
+    const { clipboard } = getElectronModule();
     const database = initDb();
     const row = database.prepare('SELECT prompt FROM images WHERE path = ?').get(filePath);
     const prompt = row?.prompt || '';
