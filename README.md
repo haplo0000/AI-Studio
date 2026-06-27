@@ -1,58 +1,52 @@
 # AI Studio
 
-Local AI workstation control plane — Phase 2A foundation.
+Local AI **workbench** — a creative workshop where ideas are forged before Council judges them.
 
-AI Studio launches, monitors, and logs external tools (Council OS, ComfyUI, Ollama, Stability Matrix, project folders). It does **not** modify those applications.
+## Phase 3 — Blacksmith Workspace
 
-## Phase 2A Foundation
+Opening AI Studio lands you in **The Blacksmith**: a conversational creative partner centered on one question:
 
-### What exists
+> **What are we making today?**
 
-- **Desktop shell** (Electron + React + TypeScript + Tailwind) with dark UI
-- **Left navigation** for all modules
-- **Header service chips** for Ollama, ComfyUI, Council OS (green/red)
-- **Center launch/status surface** with read-only control notice
-- **Right activity log** (studio.log tail)
-- **Hub** at `C:\AI\AIStudio\` (config, registry, logs, outputs)
-- **Module manifests** in `modules/*/module.manifest.json`
-- **Launch actions** for Council OS, Image Studio, Stability Matrix, Cursor, project folders
+### Blacksmith modes
 
-### What is NOT implemented (Phase 2A)
+| Mode | Purpose |
+|------|---------|
+| **Forge** | Shape raw ideas into workable concepts |
+| **Discovery** | Explore the problem space before committing |
+| **Constraint Forge** | Turn limits into creative fuel |
+| **Infinite Improvement** | Iterate relentlessly |
+| **Framework Forge** | Build scaffolds and mental models |
 
-- Tauri 2 (Rust toolchain not installed — Electron used instead)
-- SQLite output index
-- Model registry scanner
-- WebView embedding
-- Video / Voice generation
-- Blacksmith, RAG, cloud integrations
+During conversation, a **Forge Artifacts** sidebar auto-populates:
 
-### Tauri decision
+- Key Insights · Constraints · Assumptions · Risks · Opportunities · Next Questions
 
-Phase 2A targeted **Tauri 2 + React**. `rustc` / `cargo` were not available on this machine, so implementation stopped short of forcing a Rust install and used **Electron** as the desktop host. The UI and hub layout match the architecture doc; migration to Tauri remains possible later.
+Sessions are stored as structured objects in `C:\AI\AIStudio\sessions\blacksmith\` and can be packaged into **Council Briefs** at `C:\AI\AIStudio\council-briefs\` via **Send to Council**.
 
-### Prerequisites
+When Council marks a brief `needs-work`, return to the originating Blacksmith session with one click.
 
-- Node.js 20+ and npm
-- Windows 11
-- Existing installs (unchanged by AI Studio):
-  - Council OS: `C:\Dev\Council-OS`
-  - Stability Matrix / ComfyUI: `C:\AI\StabilityMatrix`
-  - Ollama on PATH (optional until Council/Coding used)
+### Workshops (not Projects)
 
-### Hub layout
+Independent creations — Foundry, AI Academy, Fern & Friend, etc. — are **Workshops**, not components of AI Studio. Configure in `settings.yaml` → `workshops.entries`.
 
-```
-C:\AI\AIStudio\
-├── config\
-│   ├── settings.yaml
-│   └── modules.enabled.json
-├── registry\
-├── logs\
-│   └── studio.log
-└── outputs\
-```
+### Phase 3.5 — Image Studio UX
 
-Edit `settings.yaml` to set `paths.project_foundry` and `paths.market_climatology` when repo paths are known.
+AI Studio is the primary image interface. ComfyUI executes in the background.
+
+- **Gallery** — watches `C:\AI\StabilityMatrix\Data\Images`, newest first, infinite scroll, auto-updates via chokidar
+- **Fullscreen viewer** — zoom, pan, wheel zoom, next/prev, delete, reveal, copy image/prompt
+- **Generate panel** — prompt, negative, style, aspect presets (incl. Legion Wallpaper 2560×1600), resolution, Generate / ×4 / Variations
+- **Open Advanced (ComfyUI)** — power-user escape hatch
+- **SQLite history** — searchable metadata at `C:\AI\AIStudio\registry\images.sqlite`
+- **Quick actions** — folder, reveal, viewer, upscale, variations, reuse prompt, send to Blacksmith
+
+### Preserved from Phase 3
+
+- Tool launchers (Council, ComfyUI, Stability Matrix, Ollama, Cursor)
+- Service health checks
+- Tools & Workshops dashboard
+- Dark theme · read-only external integration
 
 ### Development
 
@@ -62,40 +56,17 @@ npm install
 npm run dev
 ```
 
-Opens Electron with Vite dev server on **port 5174** (Council OS uses 5173).
+Opens Electron with Vite on **http://127.0.0.1:5174**. Requires **Ollama** for Blacksmith conversation (`blacksmith.model` in settings.yaml).
 
-### Production build
+### Hub layout
 
-```bash
-npm run build
-npm start
 ```
-
-### Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Electron + Vite dev |
-| `npm run build` | Typecheck + Vite production build |
-| `npm start` | Run Electron against `dist/` |
-| `npm run lint` | TypeScript check |
-
-### Module manifests
-
-Source of truth: `C:\Dev\AI-Studio\modules\`
-
-| Module | Status |
-|--------|--------|
-| Council OS | Active |
-| Coding | Active |
-| Image Studio | Active |
-| Ollama | Active |
-| Project Foundry | Active (folder path must be configured) |
-| Market Climatology | Active (folder path must be configured) |
-| Video Studio | Placeholder |
-| Voice Studio | Placeholder |
-
-### Architecture
+C:\AI\AIStudio\
+├── config\settings.yaml
+├── sessions\blacksmith\     # Blacksmith sessions
+├── council-briefs\          # Council handoff packages
+└── logs\studio.log
+```
 
 See [docs/AI_STUDIO_ARCHITECTURE.md](./docs/AI_STUDIO_ARCHITECTURE.md).
 

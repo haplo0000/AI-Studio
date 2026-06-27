@@ -1,19 +1,67 @@
-# AI Studio — Architecture & Implementation Plan (v1.0)
+# AI Studio — Architecture & Implementation Plan (v1.1)
 
-**Status:** Planning only — no production code  
+**Status:** Phase 2A implemented — AI Workbench refactor  
 **Date:** 2026-06-27  
 **Author:** Architecture review draft  
-**Scope:** Unified launcher and management layer for local AI tools on Windows 11
+**Scope:** AI workbench for local AI tools on Windows 11
+
+---
+
+## 0. Workbench Model (v1.1)
+
+AI Studio is an **AI workbench**, not a project warehouse.
+
+| Concept | Role |
+|---------|------|
+| **Tools** | Permanent capabilities owned by AI Studio (Council, ComfyUI, Cursor, etc.) |
+| **Projects** | Temporary work context — external repos with metadata in `settings.yaml` only |
+| **Hub** | `C:\AI\AIStudio\` stores config, logs, and registry — not project code |
+
+**Hard rules:**
+
+1. AI Studio **never** inspects project internals beyond user-configured metadata and launch paths.
+2. Changing **Current Project** updates workbench context only — no files move.
+3. **Blacksmith** is a workbench tool placeholder — runtime lives in Council OS later, not here.
+4. Projects (Foundry, Climatology, AI Academy, Fern & Friend, AI Studio) live in the **PROJECTS** dashboard section, not mixed with tools.
+
+### Dashboard sections
+
+```
+THINK     → Spark*, Blacksmith*, Solo, Council
+BUILD     → Cursor, GitHub*, Terminal*, Coding
+CREATE    → Image Studio, Video*, Voice*, Audio*
+KNOWLEDGE → Library*, Models, Documents*
+UTILITIES → Settings, Logs, Health, Launchers
+PROJECTS  → Foundry, Climatology, AI Academy, Fern & Friend, AI Studio, Add Project
+
+* = placeholder
+```
+
+### Projects configuration (`settings.yaml`)
+
+```yaml
+projects:
+  current: ai-studio
+  entries:
+    - id: project-foundry
+      name: Project Foundry
+      description: Pine Script / TradingView development workspace
+      status: active
+      path_key: paths.project_foundry
+      council_project_id: project-foundry
+```
+
+Repository paths resolve from `path_key` → `paths.*` or explicit `repository_path`. AI Studio opens folders and Cursor — it does not index or modify repo contents.
 
 ---
 
 ## 1. Executive Summary
 
-AI Studio is a **desktop control plane** for a local AI workstation. It does not replace Council OS, ComfyUI, Stability Matrix, Ollama, Project Foundry, or Market Climatology. It **orchestrates, monitors, and connects** them through shared configuration, health checks, outputs, and logs.
+AI Studio is a **desktop AI workbench** for a local AI workstation. It does not replace Council OS, ComfyUI, Stability Matrix, Ollama, Project Foundry, or Market Climatology. It **orchestrates, monitors, and connects** them through shared configuration, health checks, outputs, and logs — while **projects remain external**.
 
 The working ComfyUI installation at `C:\AI\StabilityMatrix` is **frozen** unless a future module requires a non-breaking integration point (health URL, launch script, output folder). Image generation continues to run through Stability Matrix → ComfyUI unchanged.
 
-AI Studio’s first shippable milestone is a **thin but reliable shell**: one window, one tray icon, service health, module launchers, and a shared config layer. Rich in-app UIs for each module come later via embedding, deep links, or iframe where safe.
+AI Studio’s shippable shell is a **workbench dashboard**: permanent tools, temporary project context, service health, activity log, and read-only launch integration. Rich in-app UIs for each module come later via embedding, deep links, or iframe where safe.
 
 ---
 
@@ -98,12 +146,12 @@ AI Studio’s first shippable milestone is a **thin but reliable shell**: one wi
 
 ### Design principle: **Integration over assimilation**
 
-Each tool remains independently runnable. AI Studio adds:
+Each tool remains independently runnable. Projects remain in their own repositories. AI Studio adds:
 
 1. **Discovery** — what’s installed, what’s running  
 2. **Orchestration** — ordered startup (Ollama before Council, ComfyUI before Image Studio)  
 3. **Observability** — one log stream, one output browser  
-4. **Profiles** — project-specific defaults without forking apps  
+4. **Context** — project metadata and launch paths without owning project internals  
 
 ---
 
@@ -148,6 +196,11 @@ paths:
   comfyui: C:\AI\StabilityMatrix\Data\Packages\ComfyUI
   project_foundry: null            # set when repo path known
   market_climatology: null
+  ai_academy: null
+  fern_and_friend: null
+projects:
+  current: ai-studio
+  entries: []                       # see config/settings.yaml.example
 services:
   ollama: http://127.0.0.1:11434
   council_os: http://127.0.0.1:5173
@@ -424,7 +477,7 @@ C:\Dev\AI-Studio\
 
 ---
 
-## 9. UI Layout — Workstation Design
+## 9. UI Layout — Workbench Design
 
 ### 9.1 Layout wireframe (persistent chrome)
 
@@ -452,7 +505,7 @@ C:\Dev\AI-Studio\
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 9.2 Navigation rail (top → bottom)
+### 9.2 Workbench sections (replaces Phase 2A navigation rail)
 
 | Icon | Module | Default surface |
 |------|--------|-----------------|

@@ -1,20 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityLog } from './components/ActivityLog';
-import { ModuleSurface } from './components/ModuleSurface';
-import { NavRail } from './components/NavRail';
+import { BlacksmithWorkspace } from './components/BlacksmithWorkspace';
+import { CurrentWorkshopSelector } from './components/CurrentWorkshopSelector';
+import { HealthPanel } from './components/HealthPanel';
+import { ImageStudioPage } from './components/image-studio/ImageStudioPage';
+import { LaunchersPanel } from './components/LaunchersPanel';
 import { ServiceChip } from './components/ServiceChip';
 import { SettingsPanel } from './components/SettingsPanel';
-import type { BootstrapData, LogEntry, ModuleManifest, ServiceHealth } from './types/studio';
+import { WorkbenchDashboard } from './components/WorkbenchDashboard';
+import type {
+  BootstrapData,
+  LogEntry,
+  ServiceHealth,
+  WorkbenchView,
+  WorkshopEntry,
+} from './types/studio';
+import { waitForAiStudio } from './lib/aiStudioBridge';
 
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null);
   const [services, setServices] = useState<ServiceHealth[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [activeId, setActiveId] = useState('council-os');
+  const [workshops, setWorkshops] = useState<WorkshopEntry[]>([]);
+  const [currentWorkshopId, setCurrentWorkshopId] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<WorkbenchView>('blacksmith');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const logPanelRef = useRef<HTMLDivElement>(null);
 
   const refreshLogs = useCallback(async () => {
     if (!window.aiStudio) return;
@@ -33,14 +47,14 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        if (!window.aiStudio) {
-          throw new Error('AI Studio API unavailable. Run with Electron (npm run dev).');
-        }
-        const data = await window.aiStudio.getBootstrap();
+        const api = await waitForAiStudio();
+        const data = await api.getBootstrap();
         if (cancelled) return;
         setBootstrap(data);
         setServices(data.services);
         setLogs(data.logs);
+        setWorkshops(data.workshops);
+        setCurrentWorkshopId(data.currentWorkshopId);
         setLoadError(null);
       } catch (err) {
         if (!cancelled) {
@@ -59,11 +73,6 @@ export default function App() {
     }, 30000);
     return () => window.clearInterval(id);
   }, [refreshHealth]);
-
-  const activeModule = useMemo<ModuleManifest | null>(() => {
-    if (activeId === 'settings') return null;
-    return bootstrap?.modules.find((m) => m.id === activeId) ?? null;
-  }, [activeId, bootstrap]);
 
   const handleLaunch = async (moduleId: string) => {
     setBusy(true);
@@ -104,6 +113,105 @@ export default function App() {
     }
   };
 
+  const handleCurrentWorkshopChange = async (workshopId: string) => {
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.setCurrentWorkshop(workshopId);
+      setCurrentWorkshopId(result.currentWorkshopId);
+      setActionMessage(
+        `Workshop context: ${workshops.find((w) => w.id === workshopId)?.name || workshopId}`,
+      );
+      await refreshLogs();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not set current workshop');
+    }
+  };
+
+  const handleOpenWorkshopFolder = async (workshopId: string) => {
+    setBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.openWorkshopFolder(workshopId);
+      setActionMessage(result.message);
+      await refreshLogs();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not open folder');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleOpenWorkshopInCursor = async (workshopId: string) => {
+    setBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.openWorkshopInCursor(workshopId);
+      setActionMessage(result.message);
+      await refreshLogs();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not open in Cursor');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleToolClick = (
+    toolId: string,
+    kind: string,
+    target?: string,
+    placeholder?: boolean,
+  ) => {
+    if (placeholder) {
+      setActionMessage(`${toolId} is not implemented yet.`);
+      return;
+    }
+
+    setActionError(null);
+    setActionMessage(null);
+
+    if (kind === 'navigate' && target) {
+      if (target === 'blacksmith') {
+        setActiveView('blacksmith');
+        return;
+      }
+      if (target === 'logs') {
+        setActiveView('workbench');
+        logPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+      }
+      setActiveView(target as WorkbenchView);
+      return;
+    }
+
+    if (kind === 'launch-module' && target) {
+      void handleLaunch(target);
+      return;
+    }
+
+    if (kind === 'launch-action' && target) {
+      void handleAction(target);
+    }
+  };
+
+  const handleSendToBlacksmith = async (goal: string) => {
+    setActionError(null);
+    try {
+      const session = await window.aiStudio.blacksmithCreateSession(currentWorkshopId, 'forge', goal);
+      await window.aiStudio.blacksmithSendMessage(session.id, goal);
+      setActiveView('blacksmith');
+      setActionMessage('Sent to Blacksmith — continue forging the idea.');
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Blacksmith handoff failed');
+    }
+  };
+
+  const comfyuiHealthy = services.find((s) => s.id === 'comfyui')?.status === 'green';
+  const ollamaHealthy = services.find((s) => s.id === 'ollama')?.status === 'green';
+  const showActivityLog = activeView !== 'blacksmith' && activeView !== 'image-studio';
+
   if (loadError) {
     return (
       <div className="h-full flex items-center justify-center p-8">
@@ -118,25 +226,67 @@ export default function App() {
   if (!bootstrap) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted">
-        Loading AI Studio…
+        Entering the forge…
       </div>
     );
   }
 
   return (
     <div className="h-full flex flex-col">
-      <header className="shrink-0 border-b border-border-subtle bg-surface-raised/80 px-4 py-3 flex items-center justify-between gap-4">
+      <header className="shrink-0 border-b border-border-subtle bg-surface-raised/80 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-sm">
-            ✦
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-accent flex items-center justify-center text-sm">
+            🔨
           </div>
           <div>
             <h1 className="text-lg font-bold text-text-primary leading-tight">AI Studio</h1>
-            <p className="text-[11px] text-text-muted">Phase 2A · Read-only control plane</p>
+            <p className="text-[11px] text-text-muted">Creative workbench · Forge before Council</p>
           </div>
         </div>
 
+        <CurrentWorkshopSelector
+          workshops={workshops}
+          currentWorkshopId={currentWorkshopId}
+          onChange={handleCurrentWorkshopChange}
+        />
+
         <div className="flex flex-wrap items-center gap-2 justify-end">
+          {activeView === 'blacksmith' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('image-studio')}
+              className="text-xs px-3 py-1.5 rounded-full border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
+            >
+              Image Studio
+            </button>
+          )}
+          {activeView === 'image-studio' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('blacksmith')}
+              className="text-xs px-3 py-1.5 rounded-full border border-accent/40 text-accent hover:bg-accent/10"
+            >
+              ← Blacksmith
+            </button>
+          )}
+          {activeView !== 'blacksmith' && activeView !== 'image-studio' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('blacksmith')}
+              className="text-xs px-3 py-1.5 rounded-full border border-accent/40 text-accent hover:bg-accent/10"
+            >
+              ← Blacksmith
+            </button>
+          )}
+          {activeView === 'blacksmith' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('workbench')}
+              className="text-xs px-3 py-1.5 rounded-full border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
+            >
+              Tools & Workshops
+            </button>
+          )}
           {services.map((svc) => (
             <ServiceChip
               key={svc.id}
@@ -156,41 +306,119 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex-1 flex min-h-0">
-        <NavRail
-          modules={bootstrap.modules}
-          activeId={activeId}
-          onSelect={setActiveId}
-        />
-
-        {activeId === 'settings' ? (
-          <SettingsPanel
-            settings={bootstrap.settings}
-            runtimeNote={bootstrap.runtimeNote}
-            onAction={handleAction}
-          />
-        ) : (
-          <ModuleSurface
-            module={activeModule}
-            services={services}
-            busy={busy}
-            lastMessage={actionMessage}
-            lastError={actionError}
-            onLaunch={handleLaunch}
-            onAction={handleAction}
-            onOpenUrl={handleOpenUrl}
-          />
-        )}
-
-        <div className="w-80 shrink-0 hidden lg:flex flex-col min-h-0">
-          <ActivityLog logs={logs} error={null} onRefresh={refreshLogs} />
+      {(actionError || actionMessage) && (
+        <div
+          className={`shrink-0 px-4 py-2 text-xs border-b ${
+            actionError
+              ? 'bg-danger/10 border-danger/30 text-danger'
+              : 'bg-success/10 border-success/30 text-success'
+          }`}
+        >
+          {actionError || actionMessage}
         </div>
+      )}
+
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          {activeView === 'blacksmith' && (
+            <BlacksmithWorkspace
+              currentWorkshopId={currentWorkshopId}
+              ollamaHealthy={ollamaHealthy}
+              onNotify={(message, error) => {
+                setActionMessage(message);
+                setActionError(error ?? null);
+              }}
+            />
+          )}
+          {activeView === 'image-studio' && (
+            <ImageStudioPage
+              comfyuiHealthy={comfyuiHealthy}
+              busy={busy}
+              setBusy={setBusy}
+              onNotify={(message, error) => {
+                setActionMessage(message);
+                setActionError(error ?? null);
+              }}
+              onSendToBlacksmith={handleSendToBlacksmith}
+              onOpenAdvanced={() => void handleAction('open-comfyui')}
+            />
+          )}
+          {activeView === 'workbench' && (
+            <WorkbenchDashboard
+              workshops={workshops}
+              currentWorkshopId={currentWorkshopId}
+              services={services}
+              busy={busy}
+              onToolClick={handleToolClick}
+              onSelectWorkshop={handleCurrentWorkshopChange}
+              onOpenWorkshopFolder={handleOpenWorkshopFolder}
+              onOpenWorkshopInCursor={handleOpenWorkshopInCursor}
+            />
+          )}
+          {activeView === 'settings' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <ViewBackBar label="Settings" onBack={() => setActiveView('blacksmith')} />
+              <SettingsPanel
+                settings={bootstrap.settings}
+                runtimeNote={bootstrap.runtimeNote}
+                workshops={workshops}
+                currentWorkshopId={currentWorkshopId}
+                onAction={handleAction}
+              />
+            </div>
+          )}
+          {activeView === 'health' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <ViewBackBar label="Health" onBack={() => setActiveView('blacksmith')} />
+              <HealthPanel
+                services={services}
+                onRefresh={refreshHealth}
+                onOpenUrl={handleOpenUrl}
+              />
+            </div>
+          )}
+          {activeView === 'launchers' && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <ViewBackBar label="Launchers" onBack={() => setActiveView('blacksmith')} />
+              <LaunchersPanel
+                modules={bootstrap.modules}
+                services={services}
+                busy={busy}
+                lastMessage={actionMessage}
+                lastError={actionError}
+                onLaunch={handleLaunch}
+                onAction={handleAction}
+              />
+            </div>
+          )}
+        </div>
+
+        {showActivityLog && (
+          <div ref={logPanelRef} className="w-80 shrink-0 hidden lg:flex flex-col min-h-0">
+            <ActivityLog logs={logs} error={null} onRefresh={refreshLogs} />
+          </div>
+        )}
       </div>
 
       <footer className="shrink-0 border-t border-border-subtle px-4 py-2 text-xs text-text-muted flex justify-between">
         <span>Hub: C:\AI\AIStudio</span>
-        <span>{bootstrap.runtimeNote.split('.')[0]}</span>
+        <span>Phase 3.5 · Image Studio</span>
       </footer>
+    </div>
+  );
+}
+
+function ViewBackBar({ label, onBack }: { label: string; onBack: () => void }) {
+  return (
+    <div className="shrink-0 px-6 py-3 border-b border-border-subtle flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-xs px-3 py-1.5 rounded-lg border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
+      >
+        ← Home
+      </button>
+      <span className="text-sm text-text-secondary">{label}</span>
     </div>
   );
 }

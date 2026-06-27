@@ -1,5 +1,19 @@
 export type ServiceStatus = 'green' | 'yellow' | 'red';
 
+export type WorkshopStatus = 'active' | 'placeholder' | 'unconfigured';
+
+import type { BlacksmithSession } from './blacksmith';
+import type { AiStudioImageApi } from './imageStudioApi';
+
+export type WorkbenchView =
+  | 'blacksmith'
+  | 'image-studio'
+  | 'workbench'
+  | 'settings'
+  | 'logs'
+  | 'health'
+  | 'launchers';
+
 export interface ServiceHealth {
   id: string;
   label: string;
@@ -27,6 +41,16 @@ export interface ModuleManifest {
   };
 }
 
+export interface WorkshopEntry {
+  id: string;
+  name: string;
+  description: string;
+  status: WorkshopStatus;
+  repository_path: string | null;
+  path_key?: string | null;
+  council_project_id?: string | null;
+}
+
 export interface LogEntry {
   ts: string;
   level: string;
@@ -42,24 +66,55 @@ export interface StudioSettings {
   paths: Record<string, string | null>;
   services: Record<string, string>;
   launchers: Record<string, string>;
+  image_studio?: {
+    output_folder?: string;
+  };
+  blacksmith?: {
+    model?: string;
+  };
+  workshops?: {
+    current: string | null;
+    entries: WorkshopEntry[];
+  };
+  /** @deprecated use workshops */
+  projects?: {
+    current: string | null;
+    entries: WorkshopEntry[];
+  };
 }
 
 export interface BootstrapData {
   settings: StudioSettings;
   services: ServiceHealth[];
   modules: ModuleManifest[];
+  workshops: WorkshopEntry[];
+  currentWorkshopId: string | null;
   logs: LogEntry[];
   tauriBlocked: boolean;
   runtimeNote: string;
 }
 
-export interface AiStudioApi {
+export interface AiStudioApi extends AiStudioImageApi {
   getBootstrap: () => Promise<BootstrapData>;
   refreshHealth: () => Promise<ServiceHealth[]>;
   getLogs: () => Promise<LogEntry[]>;
   launchModule: (moduleId: string) => Promise<{ ok: boolean; message: string }>;
   launchAction: (action: string) => Promise<{ ok: boolean; message: string }>;
   openUrl: (url: string) => Promise<{ ok: boolean }>;
+  setCurrentWorkshop: (workshopId: string) => Promise<{ ok: boolean; currentWorkshopId: string }>;
+  openWorkshopFolder: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
+  openWorkshopInCursor: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
+  blacksmithCreateSession: (
+    workshopId: string | null,
+    mode: string,
+    goal: string,
+  ) => Promise<BlacksmithSession>;
+  blacksmithGetSession: (sessionId: string) => Promise<BlacksmithSession>;
+  blacksmithListSessions: () => Promise<BlacksmithSession[]>;
+  blacksmithSendMessage: (sessionId: string, content: string) => Promise<BlacksmithSession>;
+  blacksmithSendToCouncil: (
+    sessionId: string,
+  ) => Promise<{ ok: boolean; message: string; briefId: string; briefPath: string }>;
 }
 
 declare global {

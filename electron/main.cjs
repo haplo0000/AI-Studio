@@ -1,19 +1,48 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const yaml = require('js-yaml');
+const blacksmith = require('./blacksmith.cjs');
+const imageStudio = require('./imageStudio.cjs');
+
+const ALLOWED_MEDIA_ROOTS = [
+  'C:\\AI\\StabilityMatrix\\Data\\Images',
+  'C:\\AI\\AIStudio',
+];
 
 const HUB_ROOT = 'C:\\AI\\AIStudio';
 const SETTINGS_PATH = path.join(HUB_ROOT, 'config', 'settings.yaml');
 const LOG_PATH = path.join(HUB_ROOT, 'logs', 'studio.log');
 const REPO_ROOT = path.join(__dirname, '..');
 const MODULES_DIR = path.join(REPO_ROOT, 'modules');
+const PRELOAD_PATH = path.resolve(__dirname, 'preload.cjs');
+const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5174';
 
-/** @type {BrowserWindow | null} */
-let mainWindow = null;
+function isDevRuntime() {
+  return !app.isPackaged && process.env.NODE_ENV !== 'production';
+}
+
+function isAllowedMediaPath(filePath) {
+  const normalized = path.resolve(filePath);
+  return ALLOWED_MEDIA_ROOTS.some((root) => normalized.toLowerCase().startsWith(root.toLowerCase()));
+}
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+]);
 
 function appendLog(level, source, message, meta = {}) {
   const line = JSON.stringify({
@@ -37,6 +66,72 @@ function loadSettings() {
   }
   const raw = fs.readFileSync(SETTINGS_PATH, 'utf8');
   return yaml.load(raw);
+}
+
+function saveSettings(settings) {
+  fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+  fs.writeFileSync(SETTINGS_PATH, yaml.dump(settings, { lineWidth: 120, noRefs: true }), 'utf8');
+}
+
+function resolveProjectPath(settings, entry) {
+  if (entry.repository_path && typeof entry.repository_path === 'string') {
+    return entry.repository_path;
+  }
+  if (entry.path_key) {
+    return resolvePathKey(settings, entry.path_key);
+  }
+  return null;
+}
+
+function resolveProjectStatus(entry, repositoryPath) {
+  if (entry.status === 'placeholder') return 'placeholder';
+  if (!repositoryPath) return 'unconfigured';
+  if (!fs.existsSync(repositoryPath)) return 'unconfigured';
+  return entry.status === 'active' ? 'active' : entry.status || 'active';
+}
+
+function hydrateWorkshops(settings) {
+  const workshopConfig =
+    settings.workshops || settings.projects || { current: null, entries: [] };
+  const entries = (workshopConfig.entries || []).map((entry) => {
+    const repository_path = resolveProjectPath(settings, entry);
+    return {
+      id: entry.id,
+      name: entry.name,
+      description: entry.description || '',
+      status: resolveProjectStatus(entry, repository_path),
+      repository_path,
+      path_key: entry.path_key || null,
+      council_project_id: entry.council_project_id || null,
+    };
+  });
+
+  let current = workshopConfig.current || null;
+  if (current && !entries.some((e) => e.id === current)) {
+    current = entries[0]?.id || null;
+  }
+  if (!current && entries.length > 0) {
+    current = entries[0].id;
+  }
+
+  return { entries, current };
+}
+
+function findWorkshop(settings, workshopId) {
+  const { entries } = hydrateWorkshops(settings);
+  const entry = entries.find((e) => e.id === workshopId);
+  if (!entry) throw new Error(`Unknown workshop: ${workshopId}`);
+  return entry;
+}
+
+/** @deprecated use hydrateWorkshops */
+function hydrateProjects(settings) {
+  return hydrateWorkshops(settings);
+}
+
+/** @deprecated use findWorkshop */
+function findProject(settings, projectId) {
+  return findWorkshop(settings, projectId);
 }
 
 function getByPath(obj, keyPath) {
@@ -179,19 +274,25 @@ function launchScript(scriptPath, label) {
   appendLog('info', 'launch', `Started ${label}`, { path: scriptPath });
 }
 
-function launchCursor() {
+function findCursorExe() {
   const candidates = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'cursor', 'Cursor.exe'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Cursor', 'Cursor.exe'),
   ];
-  const exe = candidates.find((p) => fs.existsSync(p));
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
+function launchCursor(folderPath) {
+  const exe = findCursorExe();
   if (exe) {
-    spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    appendLog('info', 'launch', 'Started Cursor', { path: exe });
+    const args = folderPath ? [folderPath] : [];
+    spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    appendLog('info', 'launch', 'Started Cursor', { path: exe, folder: folderPath || null });
     return;
   }
-  spawn('cmd.exe', ['/c', 'start', 'cursor'], { detached: true, stdio: 'ignore', shell: true }).unref();
-  appendLog('info', 'launch', 'Started Cursor via PATH');
+  const cmd = folderPath ? `cursor "${folderPath}"` : 'cursor';
+  spawn('cmd.exe', ['/c', 'start', cmd], { detached: true, stdio: 'ignore', shell: true }).unref();
+  appendLog('info', 'launch', 'Started Cursor via PATH', { folder: folderPath || null });
 }
 
 function launchOllamaServe() {
@@ -204,6 +305,12 @@ function launchOllamaServe() {
 }
 
 function createWindow() {
+  if (!fs.existsSync(PRELOAD_PATH)) {
+    const message = `Preload script not found: ${PRELOAD_PATH}`;
+    appendLog('error', 'preload', message);
+    throw new Error(message);
+  }
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -212,22 +319,55 @@ function createWindow() {
     backgroundColor: '#0b0f17',
     title: 'AI Studio',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: PRELOAD_PATH,
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://127.0.0.1:5174');
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    const message = `Preload failed: ${error.message}`;
+    appendLog('error', 'preload', message, { path: preloadPath });
+    console.error('[preload-error]', preloadPath, error);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    appendLog('error', 'studio', `Window load failed: ${errorDescription}`, {
+      code: errorCode,
+      url: validatedURL,
+    });
+    console.error('[did-fail-load]', errorCode, errorDescription, validatedURL);
+  });
+
+  if (isDevRuntime()) {
+    mainWindow.loadURL(DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(path.join(REPO_ROOT, 'dist', 'index.html'));
   }
 }
 
 app.whenReady().then(() => {
-  appendLog('info', 'studio', 'AI Studio started (Phase 2A)');
+  protocol.handle('media', (request) => {
+    try {
+      const encoded = request.url.replace(/^media:\/\/local\//, '');
+      const filePath = path.resolve(decodeURIComponent(encoded));
+      if (!isAllowedMediaPath(filePath) || !fs.existsSync(filePath)) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      return net.fetch(pathToFileURL(filePath).href);
+    } catch (err) {
+      return new Response(String(err), { status: 500 });
+    }
+  });
+
+  imageStudio.registerImageStudioIpc(ipcMain, loadSettings, appendLog);
+  appendLog('info', 'studio', 'AI Studio started (Phase 3.5 Image Studio)');
   createWindow();
+});
+
+app.on('will-quit', () => {
+  imageStudio.stopWatcher();
 });
 
 app.on('window-all-closed', () => {
@@ -236,19 +376,25 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('studio:get-bootstrap', async () => {
   const settings = loadSettings();
+  const { entries: workshops, current: currentWorkshopId } = hydrateWorkshops(settings);
   const services = await Promise.all([
     checkOllama(settings),
     checkComfyui(settings),
     checkCouncilOs(settings),
   ]);
   return {
-    settings,
+    settings: {
+      ...settings,
+      workshops: { current: currentWorkshopId, entries: workshops },
+    },
     services,
     modules: loadManifests(),
+    workshops,
+    currentWorkshopId,
     logs: readRecentLogs(),
     tauriBlocked: true,
     runtimeNote:
-      'Tauri 2 was not available (Rust toolchain missing). Phase 2A uses Electron as the desktop shell.',
+      'Tauri 2 was not available (Rust toolchain missing). AI Workbench uses Electron as the desktop shell.',
   };
 });
 
@@ -349,4 +495,93 @@ ipcMain.handle('studio:launch-action', async (_event, action) => {
 ipcMain.handle('studio:open-url', async (_event, url) => {
   await shell.openExternal(url);
   return { ok: true };
+});
+
+ipcMain.handle('studio:set-current-workshop', async (_event, workshopId) => {
+  const settings = loadSettings();
+  const { entries } = hydrateWorkshops(settings);
+  if (!entries.some((e) => e.id === workshopId)) {
+    throw new Error(`Unknown workshop: ${workshopId}`);
+  }
+  settings.workshops = settings.workshops || settings.projects || { entries: [] };
+  settings.workshops.current = workshopId;
+  delete settings.projects;
+  saveSettings(settings);
+  appendLog('info', 'workbench', `Current workshop context: ${workshopId}`, { workshopId });
+  return { ok: true, currentWorkshopId: workshopId };
+});
+
+ipcMain.handle('studio:open-workshop-folder', async (_event, workshopId) => {
+  const settings = loadSettings();
+  const workshop = findWorkshop(settings, workshopId);
+  if (!workshop.repository_path) {
+    throw new Error(`Repository path not configured for ${workshop.name}`);
+  }
+  if (!fs.existsSync(workshop.repository_path)) {
+    throw new Error(`Workshop folder does not exist: ${workshop.repository_path}`);
+  }
+  await shell.openPath(workshop.repository_path);
+  appendLog('info', 'launch', `Opened workshop folder: ${workshop.name}`, {
+    path: workshop.repository_path,
+  });
+  return { ok: true, message: `Opened ${workshop.repository_path}` };
+});
+
+ipcMain.handle('studio:open-workshop-cursor', async (_event, workshopId) => {
+  const settings = loadSettings();
+  const workshop = findWorkshop(settings, workshopId);
+  if (!workshop.repository_path) {
+    throw new Error(`Repository path not configured for ${workshop.name}`);
+  }
+  if (!fs.existsSync(workshop.repository_path)) {
+    throw new Error(`Workshop folder does not exist: ${workshop.repository_path}`);
+  }
+  launchCursor(workshop.repository_path);
+  return { ok: true, message: `Opened ${workshop.name} in Cursor` };
+});
+
+ipcMain.handle('blacksmith:create-session', async (_event, workshopId, mode, goal) => {
+  const session = blacksmith.createSession({ workshopId, mode, goal });
+  appendLog('info', 'blacksmith', 'Session created', { sessionId: session.id, mode });
+  return session;
+});
+
+ipcMain.handle('blacksmith:get-session', async (_event, sessionId) => {
+  return blacksmith.syncCouncilStatus(blacksmith.loadSession(sessionId));
+});
+
+ipcMain.handle('blacksmith:list-sessions', async () => {
+  return blacksmith.listSessions().map((s) => blacksmith.syncCouncilStatus(s));
+});
+
+ipcMain.handle('blacksmith:send-message', async (_event, sessionId, content) => {
+  const settings = loadSettings();
+  const session = await blacksmith.sendMessage(settings, sessionId, content);
+  appendLog('info', 'blacksmith', 'Message exchanged', { sessionId });
+  return session;
+});
+
+ipcMain.handle('blacksmith:send-to-council', async (_event, sessionId) => {
+  const settings = loadSettings();
+  const session = blacksmith.syncCouncilStatus(blacksmith.loadSession(sessionId));
+  const { brief } = blacksmith.packageCouncilBrief(session);
+
+  const vbs = resolvePathKey(settings, 'launchers.council_os_vbs');
+  if (vbs && fs.existsSync(vbs)) {
+    launchScript(vbs, 'Council OS');
+  }
+
+  await shell.openPath(blacksmith.BRIEFS_DIR);
+  appendLog('info', 'blacksmith', 'Council brief packaged', {
+    sessionId,
+    briefId: brief.id,
+    path: path.join(blacksmith.BRIEFS_DIR, `${brief.id}.json`),
+  });
+
+  return {
+    ok: true,
+    message: `Council Brief packaged. Council OS launched — brief at council-briefs/${brief.id}.json`,
+    briefId: brief.id,
+    briefPath: path.join(blacksmith.BRIEFS_DIR, `${brief.id}.json`),
+  };
 });

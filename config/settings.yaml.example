@@ -1,0 +1,32 @@
+# AI Studio Hub Settings (example)
+# Copy to C:\AI\AIStudio\config\settings.yaml
+
+version: 1
+theme: dark
+hub_root: C:\AI\AIStudio
+blacksmith:
+  model: qwen3:8b
+paths:
+  ai_studio: C:\Dev\AI-Studio
+  council_os: C:\Dev\Council-OS
+  project_foundry: null
+  market_climatology: null
+  ai_academy: null
+  fern_and_friend: null
+services:
+  ollama: http://127.0.0.1:11434
+  council_os: http://localhost:5173
+  comfyui: http://127.0.0.1:8188
+workshops:
+  current: ai-studio
+  entries:
+    - id: project-foundry
+      name: Project Foundry
+      description: Pine Script / TradingView development workspace
+      status: active
+      path_key: paths.project_foundry
+    - id: ai-academy
+      name: AI Academy
+      description: Learning and experimentation workspace
+      status: placeholder
+      path_key: paths.ai_academy

@@ -6,7 +6,9 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k \"vite --port 5174 --strictPort\" \"wait-on http://127.0.0.1:5174 && cross-env NODE_ENV=development electron .\"",
+    "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite --port 5174 --strictPort",
+    "dev:electron": "wait-on http://127.0.0.1:5174 && cross-env NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "start": "cross-env NODE_ENV=production electron .",
     "preview": "vite preview --port 5174",
@@ -14,6 +16,8 @@
     "lint": "npm run typecheck"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "chokidar": "^5.0.0",
     "js-yaml": "^4.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
