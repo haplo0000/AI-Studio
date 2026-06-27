@@ -18,7 +18,8 @@ function logPreload(message, meta = {}) {
 }
 
 function getMediaUrl(filePath) {
-  return `media://local/${encodeURIComponent(filePath)}`;
+  const normalized = path.resolve(String(filePath || '').replace(/\//g, path.sep));
+  return `media://local/?path=${encodeURIComponent(normalized)}`;
 }
 
 const aiStudioApi = {

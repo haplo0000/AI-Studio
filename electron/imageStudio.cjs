@@ -285,7 +285,7 @@ function removeImage(filePath) {
     database.prepare('DELETE FROM images WHERE path = ?').run(filePath);
     database.prepare('DELETE FROM images_fts WHERE path = ?').run(filePath);
   }
-  thumbCache.delete(filePath);
+  thumbCache.delete(normalizeMediaPath(filePath) || filePath);
 }
 
 function walkImages(root, limit = 5000, files = []) {
@@ -373,20 +373,46 @@ function getStats(outputRoot) {
   };
 }
 
-function getThumbnailDataUrl(filePath, size = 256) {
-  if (thumbCache.has(filePath)) return thumbCache.get(filePath);
-  try {
-    const { nativeImage } = getElectronModule();
-    const thumb = nativeImage.createThumbnailFromPath(filePath, { width: size, height: size });
-    const dataUrl = thumb.toDataURL();
+function normalizeMediaPath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return null;
+  return path.resolve(filePath.replace(/\//g, path.sep));
+}
+
+async function getThumbnailDataUrl(filePath, size = 256) {
+  const normalized = normalizeMediaPath(filePath);
+  if (!normalized || !fs.existsSync(normalized)) return null;
+  if (thumbCache.has(normalized)) return thumbCache.get(normalized);
+
+  const cacheDataUrl = (dataUrl) => {
+    if (!dataUrl || dataUrl.length < 32) return null;
     if (thumbCache.size > 500) {
       const first = thumbCache.keys().next().value;
       thumbCache.delete(first);
     }
-    thumbCache.set(filePath, dataUrl);
+    thumbCache.set(normalized, dataUrl);
     return dataUrl;
+  };
+
+  try {
+    const { nativeImage } = getElectronModule();
+    let thumb = await Promise.resolve(
+      nativeImage.createThumbnailFromPath(normalized, { width: size, height: size }),
+    );
+    if (!thumb || (typeof thumb.isEmpty === 'function' && thumb.isEmpty())) {
+      const full = nativeImage.createFromPath(normalized);
+      if (full.isEmpty()) return null;
+      thumb = full.resize({ width: size, height: size, quality: 'good' });
+    }
+    return cacheDataUrl(thumb.toDataURL());
   } catch {
-    return null;
+    try {
+      const { nativeImage } = getElectronModule();
+      const full = nativeImage.createFromPath(normalized);
+      if (full.isEmpty()) return null;
+      return cacheDataUrl(full.resize({ width: size, height: size, quality: 'good' }).toDataURL());
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -606,7 +632,7 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
   );
 
   ipcMain.handle('image-studio:thumbnail', async (_event, filePath) => ({
-    dataUrl: getThumbnailDataUrl(filePath),
+    dataUrl: await getThumbnailDataUrl(filePath),
   }));
 
   ipcMain.handle('image-studio:delete', async (_event, filePath) => {

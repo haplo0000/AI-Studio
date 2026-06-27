@@ -40,8 +40,33 @@ function isDevRuntime() {
 }
 
 function isAllowedMediaPath(filePath) {
-  const normalized = path.resolve(filePath);
+  const normalized = path.resolve(String(filePath || '').replace(/\//g, path.sep));
   return ALLOWED_MEDIA_ROOTS.some((root) => normalized.toLowerCase().startsWith(root.toLowerCase()));
+}
+
+const MEDIA_MIME_BY_EXT = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp',
+};
+
+function resolveMediaFilePath(requestUrl) {
+  const url = new URL(requestUrl);
+  if (url.hostname !== 'local') return null;
+  const fromQuery = url.searchParams.get('path');
+  if (fromQuery) {
+    return path.resolve(decodeURIComponent(fromQuery).replace(/\//g, path.sep));
+  }
+  let encoded = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname;
+  if (!encoded) return null;
+  return path.resolve(decodeURIComponent(encoded).replace(/\//g, path.sep));
+}
+
+function getMediaMimeType(filePath) {
+  return MEDIA_MIME_BY_EXT[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
 
 function getImageStudio() {
@@ -367,14 +392,20 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  protocol.handle('media', (request) => {
+  protocol.handle('media', async (request) => {
     try {
-      const encoded = request.url.replace(/^media:\/\/local\//, '');
-      const filePath = path.resolve(decodeURIComponent(encoded));
-      if (!isAllowedMediaPath(filePath) || !fs.existsSync(filePath)) {
+      const filePath = resolveMediaFilePath(request.url);
+      if (!filePath || !isAllowedMediaPath(filePath) || !fs.existsSync(filePath)) {
         return new Response('Forbidden', { status: 403 });
       }
-      return net.fetch(pathToFileURL(filePath).href);
+      try {
+        return await net.fetch(pathToFileURL(filePath).href);
+      } catch {
+        const data = fs.readFileSync(filePath);
+        return new Response(data, {
+          headers: { 'Content-Type': getMediaMimeType(filePath) },
+        });
+      }
     } catch (err) {
       return new Response(String(err), { status: 500 });
     }
