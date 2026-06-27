@@ -55,6 +55,299 @@ const thumbCache = new Map();
 /** @type {Map<string, object>} */
 const pendingGenerations = new Map();
 
+const COMFY_CLIENT_ID = crypto.randomUUID();
+/** @type {Map<string, object>} */
+const generationJobs = new Map();
+/** @type {Map<string, string>} */
+const promptIdToJobId = new Map();
+/** @type {Map<string, string>} */
+const prefixToJobId = new Map();
+
+/** @type {WebSocket | null} */
+let comfyWs = null;
+let comfyWsBase = null;
+/** @type {ReturnType<typeof setInterval> | null} */
+let comfyPollTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let comfyWsRetryTimer = null;
+
+function truncateLabel(text, max = 48) {
+  const trimmed = String(text || '').trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max - 1)}…`;
+}
+
+function serializeGenerationJobs() {
+  const now = Date.now();
+  return Array.from(generationJobs.values()).map((job) => ({
+    id: job.id,
+    promptId: job.promptId,
+    prefix: job.prefix,
+    label: job.label,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt ?? null,
+    elapsedMs: (job.completedAt ?? now) - job.startedAt,
+    error: job.error ?? null,
+    batchIndex: job.batchIndex ?? null,
+    batchTotal: job.batchTotal ?? null,
+  }));
+}
+
+function broadcastGenerationProgress() {
+  if (notifyWindow && !notifyWindow.isDestroyed()) {
+    notifyWindow.send('image-studio:generation-progress', { jobs: serializeGenerationJobs() });
+  }
+}
+
+function registerGenerationJob({ promptId, prefix, label, batchIndex, batchTotal }) {
+  const id = crypto.randomUUID();
+  const job = {
+    id,
+    promptId,
+    prefix,
+    label,
+    status: 'queued',
+    phase: 'Waiting for ComfyUI…',
+    progress: null,
+    startedAt: Date.now(),
+    completedAt: null,
+    error: null,
+    batchIndex: batchIndex ?? null,
+    batchTotal: batchTotal ?? null,
+  };
+  generationJobs.set(id, job);
+  promptIdToJobId.set(promptId, id);
+  prefixToJobId.set(prefix, id);
+  broadcastGenerationProgress();
+  return job;
+}
+
+function markGenerationJobError(jobId, message) {
+  const job = generationJobs.get(jobId);
+  if (!job || job.status === 'complete') return;
+  job.status = 'error';
+  job.phase = 'Error';
+  job.error = message;
+  job.completedAt = Date.now();
+  broadcastGenerationProgress();
+  scheduleGenerationJobCleanup(jobId, job.promptId, job.prefix);
+}
+
+function markGenerationJobSaving(promptId) {
+  const jobId = promptIdToJobId.get(promptId);
+  if (!jobId) return;
+  const job = generationJobs.get(jobId);
+  if (!job || job.status === 'complete' || job.status === 'error') return;
+  job.status = 'saving';
+  job.phase = 'Saving image…';
+  job.progress = null;
+  broadcastGenerationProgress();
+}
+
+function markGenerationJobCompleteForPrefix(prefix) {
+  const jobId = prefixToJobId.get(prefix);
+  if (!jobId) return;
+  const job = generationJobs.get(jobId);
+  if (!job || job.status === 'complete') return;
+  job.status = 'complete';
+  job.phase = 'Complete';
+  job.progress = 100;
+  job.completedAt = Date.now();
+  broadcastGenerationProgress();
+  scheduleGenerationJobCleanup(jobId, job.promptId, prefix);
+}
+
+function scheduleGenerationJobCleanup(jobId, promptId, prefix) {
+  setTimeout(() => {
+    generationJobs.delete(jobId);
+    if (promptId) promptIdToJobId.delete(promptId);
+    if (prefix) prefixToJobId.delete(prefix);
+    broadcastGenerationProgress();
+    if (generationJobs.size === 0) {
+      stopComfyProgressMonitor();
+    }
+  }, 6000);
+}
+
+function handleComfyWsMessage(raw) {
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const { type, data } = msg;
+  if (!data?.prompt_id) return;
+
+  const jobId = promptIdToJobId.get(data.prompt_id);
+  if (!jobId) return;
+  const job = generationJobs.get(jobId);
+  if (!job || job.status === 'complete' || job.status === 'error') return;
+
+  if (type === 'progress' && data.max > 0) {
+    job.status = 'running';
+    job.phase = 'Generating…';
+    job.progress = Math.min(100, Math.round((data.value / data.max) * 100));
+    broadcastGenerationProgress();
+    return;
+  }
+
+  if (type === 'executing') {
+    if (data.node) {
+      job.status = 'running';
+      job.phase = 'Generating…';
+      broadcastGenerationProgress();
+    } else {
+      markGenerationJobSaving(data.prompt_id);
+    }
+  }
+}
+
+function getJson(urlString, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    try {
+      const url = new URL(urlString);
+      const req = http.get(
+        url,
+        { timeout: timeoutMs },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => {
+            data += chunk;
+          });
+          res.on('end', () => {
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+              reject(new Error(`HTTP ${res.statusCode}`));
+              return;
+            }
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              reject(new Error('Invalid JSON response'));
+            }
+          });
+        },
+      );
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timed out'));
+      });
+      req.on('error', reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+async function pollComfyProgress(base) {
+  if (generationJobs.size === 0) return;
+  try {
+    const data = await getJson(`${base}/queue`);
+    const runningIds = new Set((data.queue_running || []).map((item) => item[1]));
+    const pendingIds = new Set((data.queue_pending || []).map((item) => item[1]));
+
+    for (const job of generationJobs.values()) {
+      if (job.status === 'complete' || job.status === 'error') continue;
+      if (pendingIds.has(job.promptId)) {
+        job.status = 'queued';
+        job.phase = 'Waiting for ComfyUI…';
+        job.progress = null;
+      } else if (runningIds.has(job.promptId)) {
+        if (job.status !== 'saving') {
+          job.status = 'running';
+          job.phase = 'Generating…';
+        }
+      } else if (job.status === 'queued' || job.status === 'running') {
+        job.status = 'saving';
+        job.phase = 'Saving image…';
+        job.progress = null;
+      }
+    }
+    broadcastGenerationProgress();
+  } catch {
+    // ComfyUI unreachable — keep current phase until timeout or recovery
+  }
+}
+
+function connectComfyWebSocket(base) {
+  const WebSocketImpl = globalThis.WebSocket;
+  if (!WebSocketImpl) return;
+
+  if (comfyWs) {
+    try {
+      comfyWs.close();
+    } catch {
+      // ignore
+    }
+    comfyWs = null;
+  }
+
+  const wsUrl = `${base.replace(/^http/, 'ws')}/ws?clientId=${COMFY_CLIENT_ID}`;
+  try {
+    comfyWs = new WebSocketImpl(wsUrl);
+  } catch {
+    comfyWs = null;
+    return;
+  }
+
+  comfyWs.addEventListener('message', (event) => {
+    handleComfyWsMessage(event.data);
+  });
+
+  comfyWs.addEventListener('close', () => {
+    comfyWs = null;
+    if (generationJobs.size > 0 && comfyWsBase) {
+      comfyWsRetryTimer = setTimeout(() => connectComfyWebSocket(comfyWsBase), 3000);
+    }
+  });
+
+  comfyWs.addEventListener('error', () => {
+    try {
+      comfyWs?.close();
+    } catch {
+      // ignore
+    }
+  });
+}
+
+function ensureComfyProgressMonitor(settings) {
+  const base = (settings.services?.comfyui || 'http://127.0.0.1:8188').replace(/\/$/, '');
+  if (comfyWsBase !== base) {
+    stopComfyProgressMonitor();
+    comfyWsBase = base;
+  }
+  if (!comfyPollTimer) {
+    void pollComfyProgress(base);
+    comfyPollTimer = setInterval(() => {
+      void pollComfyProgress(base);
+    }, 1500);
+  }
+  connectComfyWebSocket(base);
+}
+
+function stopComfyProgressMonitor() {
+  if (comfyPollTimer) {
+    clearInterval(comfyPollTimer);
+    comfyPollTimer = null;
+  }
+  if (comfyWsRetryTimer) {
+    clearTimeout(comfyWsRetryTimer);
+    comfyWsRetryTimer = null;
+  }
+  if (comfyWs) {
+    try {
+      comfyWs.close();
+    } catch {
+      // ignore
+    }
+    comfyWs = null;
+  }
+  comfyWsBase = null;
+}
+
 function getDatabaseModule() {
   if (!Database) {
     Database = require('better-sqlite3');
@@ -491,7 +784,7 @@ function queueGeneration(settings, params) {
   const aspect = ASPECT_DIMENSIONS[params.aspect] || ASPECT_DIMENSIONS.square;
   const dims = scaleDimensions(aspect, params.resolution || 1024);
   const seed = params.seed ?? Math.floor(Math.random() * 1_000_000_000);
-  const prefix = `aistudio_${Date.now()}`;
+  const prefix = `aistudio_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
 
   workflow['3'].inputs.seed = seed;
   workflow['3'].inputs.steps = params.steps ?? 20;
@@ -503,7 +796,7 @@ function queueGeneration(settings, params) {
   workflow['7'].inputs.text = params.negativePrompt || 'blurry, low quality, watermark, text, deformed';
   workflow['10'].inputs.filename_prefix = prefix;
 
-  const clientId = crypto.randomUUID();
+  const clientId = COMFY_CLIENT_ID;
   return postJson(`${base}/prompt`, { prompt: workflow, client_id: clientId }).then((result) => {
     pendingGenerations.set(prefix, {
       prompt: buildPrompt(params),
@@ -535,7 +828,7 @@ function queueUpscale(settings, imagePath) {
   if (saveNode) {
     saveNode.inputs.filename_prefix = prefix;
   }
-  const clientId = crypto.randomUUID();
+  const clientId = COMFY_CLIENT_ID;
   return postJson(`${base}/prompt`, { prompt: workflow, client_id: clientId });
 }
 
@@ -549,6 +842,7 @@ function attachPendingMetadata(filePath) {
         timestamp: new Date().toISOString(),
       });
       pendingGenerations.delete(prefix);
+      markGenerationJobCompleteForPrefix(prefix);
       return;
     }
   }
@@ -602,6 +896,8 @@ function stopWatcher() {
     watcher.close();
     watcher = null;
   }
+  notifyWindow = null;
+  stopComfyProgressMonitor();
 }
 
 function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
@@ -610,6 +906,7 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
     const outputRoot = getOutputRoot(settings);
     initDb();
     startWatcher(outputRoot, event.sender);
+    broadcastGenerationProgress();
     appendLog('info', 'image-studio', 'Gallery watcher started', { outputRoot });
     return { ok: true, outputRoot };
   });
@@ -675,19 +972,35 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
     return { ok: true, prompt };
   });
 
+  ipcMain.handle('image-studio:generation-jobs', async () => ({
+    jobs: serializeGenerationJobs(),
+  }));
+
   ipcMain.handle('image-studio:generate', async (_event, params) => {
     const settings = loadSettings();
     const started = Date.now();
+    const count = params.count ?? 1;
+    const registeredJobs = [];
     try {
-      const results = [];
-      const count = params.count ?? 1;
+      ensureComfyProgressMonitor(settings);
       for (let i = 0; i < count; i++) {
         const result = await queueGeneration(settings, {
           ...params,
           count: 1,
           seed: params.seed != null ? params.seed + i : undefined,
         });
-        results.push(result);
+        const label =
+          count > 1
+            ? `${truncateLabel(params.prompt)} (${i + 1}/${count})`
+            : truncateLabel(params.prompt);
+        const job = registerGenerationJob({
+          promptId: result.promptId,
+          prefix: result.prefix,
+          label,
+          batchIndex: count > 1 ? i + 1 : null,
+          batchTotal: count > 1 ? count : null,
+        });
+        registeredJobs.push(job);
       }
       appendLog('info', 'image-studio', 'Generation queued via ComfyUI', {
         count,
@@ -696,9 +1009,13 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
       return {
         ok: true,
         message: `Queued ${count} generation(s) — ComfyUI is executing. Images appear automatically.`,
-        promptIds: results.map((r) => r.promptId),
+        promptIds: registeredJobs.map((j) => j.promptId),
+        jobs: serializeGenerationJobs(),
       };
     } catch (err) {
+      for (const job of registeredJobs) {
+        markGenerationJobError(job.id, err.message || 'Generation failed');
+      }
       throw new Error(err.message || 'Generation failed — is ComfyUI running?');
     }
   });

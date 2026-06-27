@@ -1,6 +1,8 @@
 import type {
   GenerateImageParams,
   GenerateImageResult,
+  GenerationJobState,
+  GenerationProgressEvent,
   ImageRecord,
   ImageStudioStats,
 } from '../types/imageStudio';
@@ -28,9 +30,11 @@ export interface AiStudioImageApi {
   imageStudioCopyImage: (filePath: string) => Promise<{ ok: boolean }>;
   imageStudioCopyPrompt: (filePath: string) => Promise<{ ok: boolean; prompt: string }>;
   imageStudioGenerate: (params: GenerateImageParams) => Promise<GenerateImageResult>;
+  imageStudioGenerationJobs: () => Promise<{ jobs: GenerationJobState[] }>;
   imageStudioVariations: (filePath: string) => Promise<{ ok: boolean; message: string }>;
   imageStudioUpscale: (filePath: string) => Promise<{ ok: boolean; message: string }>;
   imageStudioGetImage: (filePath: string) => Promise<ImageRecord | null>;
   getMediaUrl: (filePath: string) => string;
   onImageStudioChanged: (callback: (event: ImageStudioChangeEvent) => void) => () => void;
+  onGenerationProgress: (callback: (event: GenerationProgressEvent) => void) => () => void;
 }

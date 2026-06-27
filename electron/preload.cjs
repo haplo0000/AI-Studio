@@ -52,6 +52,7 @@ const aiStudioApi = {
   imageStudioCopyImage: (filePath) => ipcRenderer.invoke('image-studio:copy-image', filePath),
   imageStudioCopyPrompt: (filePath) => ipcRenderer.invoke('image-studio:copy-prompt', filePath),
   imageStudioGenerate: (params) => ipcRenderer.invoke('image-studio:generate', params),
+  imageStudioGenerationJobs: () => ipcRenderer.invoke('image-studio:generation-jobs'),
   imageStudioVariations: (filePath) => ipcRenderer.invoke('image-studio:variations', filePath),
   imageStudioUpscale: (filePath) => ipcRenderer.invoke('image-studio:upscale', filePath),
   imageStudioGetImage: (filePath) => ipcRenderer.invoke('image-studio:get-image', filePath),
@@ -60,6 +61,11 @@ const aiStudioApi = {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('image-studio:changed', handler);
     return () => ipcRenderer.removeListener('image-studio:changed', handler);
+  },
+  onGenerationProgress: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('image-studio:generation-progress', handler);
+    return () => ipcRenderer.removeListener('image-studio:generation-progress', handler);
   },
 };
 

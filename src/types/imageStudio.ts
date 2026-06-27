@@ -30,6 +30,28 @@ export interface ImageRecord {
   tags: string | null;
 }
 
+export type GenerationJobStatus = 'queued' | 'running' | 'saving' | 'complete' | 'error';
+
+export interface GenerationJobState {
+  id: string;
+  promptId: string;
+  prefix: string;
+  label: string;
+  status: GenerationJobStatus;
+  phase: string;
+  progress: number | null;
+  startedAt: number;
+  completedAt: number | null;
+  elapsedMs: number;
+  error: string | null;
+  batchIndex: number | null;
+  batchTotal: number | null;
+}
+
+export interface GenerationProgressEvent {
+  jobs: GenerationJobState[];
+}
+
 export interface ImageStudioStats {
   outputFolder: string;
   freeDiskBytes: number | null;
@@ -55,6 +77,7 @@ export interface GenerateImageResult {
   ok: boolean;
   message: string;
   promptIds?: string[];
+  jobs?: GenerationJobState[];
 }
 
 export const ASPECT_DIMENSIONS: Record<ImageAspectPreset, { width: number; height: number; label: string }> = {

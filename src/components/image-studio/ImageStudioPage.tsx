@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { GenerateImageParams, ImageRecord, ImageStudioStats } from '../../types/imageStudio';
+import type {
+  GenerateImageParams,
+  GenerationJobState,
+  ImageRecord,
+  ImageStudioStats,
+} from '../../types/imageStudio';
 import { GeneratePanel } from './GeneratePanel';
+import { GenerationProgress } from './GenerationProgress';
 import { ImageGallery } from './ImageGallery';
 import { ImageViewerModal } from './ImageViewerModal';
 import { OutputLocationCard } from './OutputLocationCard';
@@ -30,6 +36,12 @@ export function ImageStudioPage({
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [generationJobs, setGenerationJobs] = useState<GenerationJobState[]>([]);
+  const [progressNow, setProgressNow] = useState(() => Date.now());
+
+  const isGenerating = generationJobs.some(
+    (job) => job.status === 'queued' || job.status === 'running' || job.status === 'saving',
+  );
 
   const refreshStats = useCallback(async () => {
     const s = await window.aiStudio.imageStudioStats();
@@ -62,18 +74,32 @@ export function ImageStudioPage({
     let cancelled = false;
     (async () => {
       await window.aiStudio.imageStudioStart();
-      if (!cancelled) await loadPage(true);
+      if (!cancelled) {
+        await loadPage(true);
+        const progress = await window.aiStudio.imageStudioGenerationJobs();
+        if (!cancelled) setGenerationJobs(progress.jobs);
+      }
     })();
-    const unsub = window.aiStudio.onImageStudioChanged(() => {
+    const unsubGallery = window.aiStudio.onImageStudioChanged(() => {
       void loadPage(true);
+    });
+    const unsubProgress = window.aiStudio.onGenerationProgress(({ jobs }) => {
+      setGenerationJobs(jobs);
     });
     return () => {
       cancelled = true;
-      unsub();
+      unsubGallery();
+      unsubProgress();
       void window.aiStudio.imageStudioStop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!isGenerating) return;
+    const id = window.setInterval(() => setProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isGenerating]);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -87,6 +113,7 @@ export function ImageStudioPage({
     onNotify(null, null);
     try {
       const result = await window.aiStudio.imageStudioGenerate(params);
+      if (result.jobs) setGenerationJobs(result.jobs);
       onNotify(result.message);
     } catch (err) {
       onNotify(null, err instanceof Error ? err.message : 'Generation failed');
@@ -184,10 +211,12 @@ export function ImageStudioPage({
 
         <GeneratePanel
           comfyuiHealthy={comfyuiHealthy}
-          busy={busy}
+          busy={busy || isGenerating}
           onGenerate={handleGenerate}
           onOpenAdvanced={onOpenAdvanced}
         />
+
+        <GenerationProgress jobs={generationJobs} now={progressNow} />
 
         <input
           type="search"
