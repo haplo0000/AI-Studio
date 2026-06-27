@@ -94,6 +94,21 @@ export interface BootstrapData {
   runtimeNote: string;
 }
 
+export interface WorkstationServiceSnapshot {
+  id: string;
+  label: string;
+  status: ServiceStatus;
+  message: string;
+}
+
+export interface WorkstationStatus {
+  phase: 'idle' | 'starting' | 'ready';
+  message: string;
+  activeService?: string;
+  workbenchReady: boolean;
+  services: Record<string, WorkstationServiceSnapshot>;
+}
+
 export interface AiStudioApi extends AiStudioImageApi {
   getBootstrap: () => Promise<BootstrapData>;
   refreshHealth: () => Promise<ServiceHealth[]>;
@@ -104,6 +119,10 @@ export interface AiStudioApi extends AiStudioImageApi {
   setCurrentWorkshop: (workshopId: string) => Promise<{ ok: boolean; currentWorkshopId: string }>;
   openWorkshopFolder: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
   openWorkshopInCursor: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
+  prepareWorkstation: () => Promise<WorkstationStatus>;
+  startService: (serviceId: string) => Promise<{ ok: boolean; message: string }>;
+  restartComfyui: () => Promise<{ ok: boolean; message: string }>;
+  onWorkstationStatus: (callback: (status: WorkstationStatus) => void) => () => void;
   blacksmithCreateSession: (
     workshopId: string | null,
     mode: string,

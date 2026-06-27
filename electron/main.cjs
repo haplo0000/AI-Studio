@@ -21,6 +21,7 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 const blacksmith = require('./blacksmith.cjs');
+const { createServiceStartup } = require('./serviceStartup.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
   'C:\\AI\\StabilityMatrix\\Data\\Images',
@@ -34,6 +35,12 @@ const REPO_ROOT = path.join(__dirname, '..');
 const MODULES_DIR = path.join(REPO_ROOT, 'modules');
 const PRELOAD_PATH = path.resolve(__dirname, 'preload.cjs');
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5174';
+
+/** @type {import('electron').BrowserWindow | null} */
+let mainWindow = null;
+/** @type {ReturnType<typeof createServiceStartup> | null} */
+let serviceStartup = null;
+let workstationPrepareTriggered = false;
 
 function isDevRuntime() {
   return !app.isPackaged && process.env.NODE_ENV !== 'production';
@@ -333,6 +340,32 @@ function launchOllamaServe() {
   appendLog('info', 'launch', 'Started ollama serve');
 }
 
+function initServiceStartup() {
+  serviceStartup = createServiceStartup({
+    checkOllama,
+    checkComfyui,
+    checkCouncilOs,
+    launchOllamaServe,
+    launchScript,
+    resolvePathKey,
+    loadSettings,
+    appendLog,
+    broadcastStatus: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('studio:workstation-status', status);
+      }
+    },
+  });
+}
+
+function triggerWorkstationPrepare() {
+  if (workstationPrepareTriggered || !serviceStartup) return;
+  workstationPrepareTriggered = true;
+  void serviceStartup.prepareWorkstation().catch((err) => {
+    appendLog('error', 'workstation', 'Prepare failed', { error: err.message });
+  });
+}
+
 function createWindow() {
   if (!fs.existsSync(PRELOAD_PATH)) {
     const message = `Preload script not found: ${PRELOAD_PATH}`;
@@ -382,6 +415,7 @@ function createWindow() {
       .catch(() => {
         // ignore probe failures
       });
+    triggerWorkstationPrepare();
   });
 
   if (isDevRuntime()) {
@@ -412,6 +446,7 @@ app.whenReady().then(() => {
   });
 
   getImageStudio().registerImageStudioIpc(ipcMain, loadSettings, appendLog);
+  initServiceStartup();
   appendLog('info', 'studio', 'AI Studio started (Phase 3.5 Image Studio)');
   createWindow();
 });
@@ -455,6 +490,21 @@ ipcMain.handle('studio:get-bootstrap', async () => {
 ipcMain.handle('studio:refresh-health', async () => {
   const settings = loadSettings();
   return Promise.all([checkOllama(settings), checkComfyui(settings), checkCouncilOs(settings)]);
+});
+
+ipcMain.handle('studio:prepare-workstation', async () => {
+  if (!serviceStartup) throw new Error('Workstation services not initialized');
+  return serviceStartup.prepareWorkstation();
+});
+
+ipcMain.handle('studio:start-service', async (_event, serviceId) => {
+  if (!serviceStartup) throw new Error('Workstation services not initialized');
+  return serviceStartup.startServiceManual(serviceId);
+});
+
+ipcMain.handle('studio:restart-comfyui', async () => {
+  if (!serviceStartup) throw new Error('Workstation services not initialized');
+  return serviceStartup.restartComfyui();
 });
 
 ipcMain.handle('studio:get-logs', async () => readRecentLogs());

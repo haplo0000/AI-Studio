@@ -39,6 +39,14 @@ const aiStudioApi = {
   blacksmithSendMessage: (sessionId, content) =>
     ipcRenderer.invoke('blacksmith:send-message', sessionId, content),
   blacksmithSendToCouncil: (sessionId) => ipcRenderer.invoke('blacksmith:send-to-council', sessionId),
+  prepareWorkstation: () => ipcRenderer.invoke('studio:prepare-workstation'),
+  startService: (serviceId) => ipcRenderer.invoke('studio:start-service', serviceId),
+  restartComfyui: () => ipcRenderer.invoke('studio:restart-comfyui'),
+  onWorkstationStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('studio:workstation-status', handler);
+    return () => ipcRenderer.removeListener('studio:workstation-status', handler);
+  },
   imageStudioStart: () => ipcRenderer.invoke('image-studio:start'),
   imageStudioStop: () => ipcRenderer.invoke('image-studio:stop'),
   imageStudioStats: () => ipcRenderer.invoke('image-studio:stats'),

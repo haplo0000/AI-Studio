@@ -58,6 +58,12 @@ npm run dev
 
 Opens Electron with Vite on **http://127.0.0.1:5174**. Requires **Ollama** for Blacksmith conversation (`blacksmith.model` in settings.yaml).
 
+### Desktop launch
+
+Double-click the **AI Studio** desktop shortcut (create with `scripts\Create-Desktop-Shortcut.ps1`) or run `scripts\Launch-AI-Studio.bat`.
+
+The desktop launcher starts AI Studio and **prepares the local workstation automatically**: Ollama, ComfyUI, and Council OS are checked on startup and started when offline. A startup status panel shows progress and provides manual service controls.
+
 ### Hub layout
 
 ```

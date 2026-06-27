@@ -8,11 +8,16 @@ import { LaunchersPanel } from './components/LaunchersPanel';
 import { ServiceChip } from './components/ServiceChip';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WorkbenchDashboard } from './components/WorkbenchDashboard';
+import {
+  mergeWorkstationServices,
+  WorkstationStartupPanel,
+} from './components/WorkstationStartupPanel';
 import type {
   BootstrapData,
   LogEntry,
   ServiceHealth,
   WorkbenchView,
+  WorkstationStatus,
   WorkshopEntry,
 } from './types/studio';
 import { waitForAiStudio } from './lib/aiStudioBridge';
@@ -28,6 +33,8 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [workstationStatus, setWorkstationStatus] = useState<WorkstationStatus | null>(null);
+  const [workstationBusy, setWorkstationBusy] = useState(false);
   const logPanelRef = useRef<HTMLDivElement>(null);
 
   const refreshLogs = useCallback(async () => {
@@ -45,9 +52,17 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
     (async () => {
       try {
         const api = await waitForAiStudio();
+        unsubscribe = api.onWorkstationStatus((status) => {
+          if (cancelled) return;
+          setWorkstationStatus(status);
+          setServices((prev) => mergeWorkstationServices(prev, status));
+        });
+
         const data = await api.getBootstrap();
         if (cancelled) return;
         setBootstrap(data);
@@ -56,14 +71,23 @@ export default function App() {
         setWorkshops(data.workshops);
         setCurrentWorkshopId(data.currentWorkshopId);
         setLoadError(null);
+
+        void api.prepareWorkstation().then((status) => {
+          if (!cancelled) {
+            setWorkstationStatus(status);
+            setServices((prev) => mergeWorkstationServices(prev, status));
+          }
+        });
       } catch (err) {
         if (!cancelled) {
           setLoadError(err instanceof Error ? err.message : 'Failed to load AI Studio');
         }
       }
     })();
+
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 
@@ -208,7 +232,39 @@ export default function App() {
     }
   };
 
-  const comfyuiHealthy = services.find((s) => s.id === 'comfyui')?.status === 'green';
+  const handleStartService = async (serviceId: string) => {
+    setWorkstationBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.startService(serviceId);
+      setActionMessage(result.message);
+      await refreshHealth();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not start service');
+    } finally {
+      setWorkstationBusy(false);
+    }
+  };
+
+  const handleRestartComfyui = async () => {
+    setWorkstationBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.restartComfyui();
+      setActionMessage(result.message);
+      await refreshHealth();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not restart ComfyUI');
+    } finally {
+      setWorkstationBusy(false);
+    }
+  };
+
+  const comfyuiHealthy =
+    (workstationStatus?.services.comfyui ?? services.find((s) => s.id === 'comfyui'))?.status ===
+    'green';
   const ollamaHealthy = services.find((s) => s.id === 'ollama')?.status === 'green';
   const showActivityLog = activeView !== 'blacksmith' && activeView !== 'image-studio';
 
@@ -305,6 +361,13 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      <WorkstationStartupPanel
+        status={workstationStatus}
+        busy={workstationBusy}
+        onStartService={(id) => void handleStartService(id)}
+        onRestartComfyui={() => void handleRestartComfyui()}
+      />
 
       {(actionError || actionMessage) && (
         <div
