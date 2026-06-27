@@ -42,6 +42,21 @@ let mainWindow = null;
 let serviceStartup = null;
 let workstationPrepareTriggered = false;
 
+function isDeveloperLaunchMode() {
+  return process.env.AI_STUDIO_LAUNCH_MODE === 'developer';
+}
+
+function spawnDetached(command, args, options = {}) {
+  const visible = isDeveloperLaunchMode();
+  return spawn(command, args, {
+    detached: true,
+    stdio: visible ? 'inherit' : 'ignore',
+    windowsHide: !visible,
+    shell: options.shell ?? false,
+    ...options,
+  });
+}
+
 function isDevRuntime() {
   return !app.isPackaged && process.env.NODE_ENV !== 'production';
 }
@@ -298,16 +313,22 @@ function launchScript(scriptPath, label) {
     throw new Error(`Launcher not found: ${scriptPath || '(empty)'}`);
   }
   const ext = path.extname(scriptPath).toLowerCase();
+  const hidden = !isDeveloperLaunchMode();
+
   if (ext === '.vbs') {
-    spawn('wscript.exe', [scriptPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawnDetached('wscript.exe', [scriptPath]).unref();
   } else if (ext === '.bat' || ext === '.cmd') {
-    spawn('cmd.exe', ['/c', 'start', '""', scriptPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    if (hidden) {
+      spawnDetached('cmd.exe', ['/c', scriptPath]).unref();
+    } else {
+      spawnDetached('cmd.exe', ['/c', 'start', '""', scriptPath]).unref();
+    }
   } else if (ext === '.exe') {
-    spawn(scriptPath, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    spawnDetached(scriptPath, []).unref();
   } else {
     shell.openPath(scriptPath);
   }
-  appendLog('info', 'launch', `Started ${label}`, { path: scriptPath });
+  appendLog('info', 'launch', `Started ${label}`, { path: scriptPath, hidden });
 }
 
 function findCursorExe() {
@@ -332,12 +353,12 @@ function launchCursor(folderPath) {
 }
 
 function launchOllamaServe() {
-  spawn('cmd.exe', ['/c', 'start', 'Ollama Server', 'ollama', 'serve'], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false,
-  }).unref();
-  appendLog('info', 'launch', 'Started ollama serve');
+  if (isDeveloperLaunchMode()) {
+    spawnDetached('cmd.exe', ['/c', 'start', 'Ollama Server', 'ollama', 'serve']).unref();
+  } else {
+    spawnDetached('ollama', ['serve'], { shell: true }).unref();
+  }
+  appendLog('info', 'launch', 'Started ollama serve', { hidden: !isDeveloperLaunchMode() });
 }
 
 function launchCouncilOsSilent() {
@@ -350,9 +371,9 @@ function launchCouncilOsSilent() {
   if (!fs.existsSync(pkg)) {
     throw new Error(`Council OS not found at ${councilDir}`);
   }
-  spawn(
-    'cmd.exe',
-    [
+
+  if (isDeveloperLaunchMode()) {
+    spawnDetached('cmd.exe', [
       '/c',
       'start',
       '/MIN',
@@ -360,10 +381,14 @@ function launchCouncilOsSilent() {
       'cmd',
       '/c',
       `cd /d "${councilDir}" && npm run dev`,
-    ],
-    { detached: true, stdio: 'ignore', windowsHide: true },
-  ).unref();
-  appendLog('info', 'launch', 'Started Council OS dev server (silent)', { path: councilDir });
+    ]).unref();
+  } else {
+    spawnDetached('cmd.exe', ['/c', `cd /d "${councilDir}" && npm run dev`]).unref();
+  }
+  appendLog('info', 'launch', 'Started Council OS dev server (silent)', {
+    path: councilDir,
+    hidden: !isDeveloperLaunchMode(),
+  });
 }
 
 async function openCouncilInBrowser() {

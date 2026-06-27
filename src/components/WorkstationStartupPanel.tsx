@@ -1,5 +1,10 @@
 import { useState } from 'react';
 import type { ServiceStatus, WorkstationStatus } from '../types/studio';
+import {
+  isCouncilOptionalRow,
+  rowIcon,
+  rowState,
+} from '../lib/workstationRows';
 
 interface WorkstationStartupPanelProps {
   status: WorkstationStatus | null;
@@ -14,25 +19,6 @@ const SERVICE_ROWS = [
   { id: 'comfyui', label: 'ComfyUI' },
   { id: 'council_os', label: 'Council OS' },
 ] as const;
-
-function rowState(
-  id: string,
-  status: WorkstationStatus | null,
-): 'pending' | 'starting' | 'ready' | 'offline' {
-  if (!status) return 'pending';
-  const svc = status.services[id];
-  if (svc?.status === 'green') return 'ready';
-  if (status.activeService === id && status.phase === 'starting') return 'starting';
-  if (svc?.status === 'red') return 'offline';
-  return 'pending';
-}
-
-const ROW_ICONS: Record<ReturnType<typeof rowState>, string> = {
-  pending: '○',
-  starting: '◌',
-  ready: '✓',
-  offline: '✕',
-};
 
 function councilRowLabel(state: ReturnType<typeof rowState>, workbenchReady: boolean): string {
   if (state === 'ready') return 'Council OS running';
@@ -88,8 +74,7 @@ export function WorkstationStartupPanel({
           <ul className="mt-2 space-y-1">
             {SERVICE_ROWS.map(({ id, label }) => {
               const state = rowState(id, status);
-              const isCouncilOptional =
-                id === 'council_os' && status?.workbenchReady && state === 'offline';
+              const isCouncilOptional = isCouncilOptionalRow(id, status);
               const rowStyle = isCouncilOptional ? 'text-text-muted' : ROW_STYLES[state];
               const rowText =
                 id === 'council_os'
@@ -104,7 +89,7 @@ export function WorkstationStartupPanel({
               return (
                 <li key={id} className={`text-xs flex items-center gap-2 ${rowStyle}`}>
                   <span className="w-4 text-center font-mono">
-                    {isCouncilOptional ? '○' : ROW_ICONS[state]}
+                    {rowIcon(state, isCouncilOptional)}
                   </span>
                   <span>{rowText}</span>
                 </li>

@@ -8,6 +8,7 @@ import { LaunchersPanel } from './components/LaunchersPanel';
 import { ServiceChip } from './components/ServiceChip';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WorkbenchDashboard } from './components/WorkbenchDashboard';
+import { StartupSplash } from './components/StartupSplash';
 import {
   mergeWorkstationServices,
   WorkstationStartupPanel,
@@ -35,6 +36,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [workstationStatus, setWorkstationStatus] = useState<WorkstationStatus | null>(null);
   const [workstationBusy, setWorkstationBusy] = useState(false);
+  const [prepareComplete, setPrepareComplete] = useState(false);
+  const [splashDismissed, setSplashDismissed] = useState(false);
+  const [splashFading, setSplashFading] = useState(false);
   const logPanelRef = useRef<HTMLDivElement>(null);
 
   const refreshLogs = useCallback(async () => {
@@ -76,6 +80,7 @@ export default function App() {
           if (!cancelled) {
             setWorkstationStatus(status);
             setServices((prev) => mergeWorkstationServices(prev, status));
+            setPrepareComplete(true);
           }
         });
       } catch (err) {
@@ -90,6 +95,17 @@ export default function App() {
       unsubscribe?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!bootstrap || !prepareComplete || splashDismissed) return;
+    const delay = workstationStatus?.workbenchReady ? 900 : 400;
+    const fadeTimer = window.setTimeout(() => setSplashFading(true), delay);
+    const dismissTimer = window.setTimeout(() => setSplashDismissed(true), delay + 500);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(dismissTimer);
+    };
+  }, [bootstrap, prepareComplete, splashDismissed, workstationStatus?.workbenchReady]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -283,6 +299,8 @@ export default function App() {
   const ollamaHealthy = services.find((s) => s.id === 'ollama')?.status === 'green';
   const showActivityLog = activeView !== 'blacksmith' && activeView !== 'image-studio';
 
+  const showSplash = !splashDismissed && !loadError;
+
   if (loadError) {
     return (
       <div className="h-full flex items-center justify-center p-8">
@@ -294,7 +312,7 @@ export default function App() {
     );
   }
 
-  if (!bootstrap) {
+  if (!bootstrap && !showSplash) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted">
         Entering the forge…
@@ -303,6 +321,10 @@ export default function App() {
   }
 
   return (
+    <div className="h-full flex flex-col relative">
+      {showSplash && <StartupSplash status={workstationStatus} fading={splashFading} />}
+
+      {bootstrap && (
     <div className="h-full flex flex-col">
       <header className="shrink-0 border-b border-border-subtle bg-surface-raised/80 px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -483,6 +505,8 @@ export default function App() {
         <span>Hub: C:\AI\AIStudio</span>
         <span>Phase 3.5 · Image Studio</span>
       </footer>
+    </div>
+      )}
     </div>
   );
 }

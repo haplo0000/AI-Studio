@@ -1,13 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = 'C:\Dev\AI-Studio'
-$BatPath = Join-Path $RepoRoot 'scripts\Launch-AI-Studio.bat'
+$ProductionLauncher = Join-Path $RepoRoot 'scripts\Launch-AI-Studio.vbs'
+$DeveloperLauncher = Join-Path $RepoRoot 'scripts\Launch-AI-Studio-Developer.bat'
 $Desktop = [Environment]::GetFolderPath('Desktop')
-$ShortcutPath = Join-Path $Desktop 'AI Studio.lnk'
-
-if (-not (Test-Path $BatPath)) {
-  throw "Launcher not found: $BatPath"
-}
 
 $iconCandidates = @(
   (Join-Path $RepoRoot 'assets\ai-studio.ico'),
@@ -15,20 +11,41 @@ $iconCandidates = @(
   (Join-Path $RepoRoot 'public\favicon.ico')
 )
 
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $BatPath
-$Shortcut.WorkingDirectory = $RepoRoot
-$Shortcut.WindowStyle = 1
-$Shortcut.Description = 'Launch AI Studio desktop app'
-
-foreach ($icon in $iconCandidates) {
-  if (Test-Path $icon) {
-    $Shortcut.IconLocation = "$icon,0"
-    break
+function Set-ShortcutIcon($Shortcut) {
+  foreach ($icon in $iconCandidates) {
+    if (Test-Path $icon) {
+      $Shortcut.IconLocation = "$icon,0"
+      return
+    }
   }
 }
 
-$Shortcut.Save()
-Write-Host "Created shortcut: $ShortcutPath"
-Write-Host "Target: $BatPath"
+$WshShell = New-Object -ComObject WScript.Shell
+
+if (-not (Test-Path $ProductionLauncher)) {
+  throw "Production launcher not found: $ProductionLauncher"
+}
+
+$ProdShortcutPath = Join-Path $Desktop 'AI Studio.lnk'
+$ProdShortcut = $WshShell.CreateShortcut($ProdShortcutPath)
+$ProdShortcut.TargetPath = $ProductionLauncher
+$ProdShortcut.WorkingDirectory = $RepoRoot
+$ProdShortcut.WindowStyle = 7
+$ProdShortcut.Description = 'Launch AI Studio (production — no console windows)'
+Set-ShortcutIcon $ProdShortcut
+$ProdShortcut.Save()
+
+if (Test-Path $DeveloperLauncher) {
+  $DevShortcutPath = Join-Path $Desktop 'AI Studio (Developer).lnk'
+  $DevShortcut = $WshShell.CreateShortcut($DevShortcutPath)
+  $DevShortcut.TargetPath = $DeveloperLauncher
+  $DevShortcut.WorkingDirectory = $RepoRoot
+  $DevShortcut.WindowStyle = 1
+  $DevShortcut.Description = 'Launch AI Studio (developer — consoles visible)'
+  Set-ShortcutIcon $DevShortcut
+  $DevShortcut.Save()
+  Write-Host "Created shortcut: $DevShortcutPath"
+}
+
+Write-Host "Created shortcut: $ProdShortcutPath"
+Write-Host "Target: $ProductionLauncher"
