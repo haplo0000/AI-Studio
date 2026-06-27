@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import {
   ASPECT_DIMENSIONS,
   RESOLUTION_OPTIONS,
@@ -6,11 +6,12 @@ import {
   type ImageAspectPreset,
   type ImageStylePreset,
 } from '../../types/imageStudio';
+import { loadPromptHistory, savePromptToHistory } from '../../lib/promptHistory';
 
 interface GeneratePanelProps {
   comfyuiHealthy: boolean;
-  busy: boolean;
-  onGenerate: (params: GenerateImageParams) => void;
+  queueing: boolean;
+  onGenerate: (params: GenerateImageParams) => Promise<boolean>;
   onOpenAdvanced: () => void;
 }
 
@@ -27,7 +28,12 @@ const ASPECTS = Object.entries(ASPECT_DIMENSIONS).map(([id, v]) => ({
   label: v.label,
 }));
 
-export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced }: GeneratePanelProps) {
+export function GeneratePanel({
+  comfyuiHealthy,
+  queueing,
+  onGenerate,
+  onOpenAdvanced,
+}: GeneratePanelProps) {
   const [prompt, setPrompt] = useState('');
   const [negativePrompt, setNegativePrompt] = useState(
     'blurry, low quality, watermark, text, deformed, bad anatomy',
@@ -36,6 +42,10 @@ export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced
   const [aspect, setAspect] = useState<ImageAspectPreset>('square');
   const [resolution, setResolution] = useState<number>(1024);
   const [expanded, setExpanded] = useState(true);
+  const [history, setHistory] = useState(loadPromptHistory);
+  const [historyRecallIndex, setHistoryRecallIndex] = useState(-1);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef('');
 
   const baseParams = (): GenerateImageParams => ({
     prompt,
@@ -44,6 +54,58 @@ export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced
     aspect,
     resolution,
   });
+
+  const focusPrompt = () => {
+    requestAnimationFrame(() => {
+      const el = promptRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, 0);
+    });
+  };
+
+  const submitGenerate = async (count: number) => {
+    if (queueing || !prompt.trim() || !comfyuiHealthy) return;
+    const submitted = prompt.trim();
+    const ok = await onGenerate({ ...baseParams(), prompt: submitted, count });
+    if (ok) {
+      setHistory(savePromptToHistory(submitted));
+      setPrompt('');
+      setHistoryRecallIndex(-1);
+      draftRef.current = '';
+      focusPrompt();
+    }
+  };
+
+  const handlePromptKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (history.length === 0) return;
+      e.preventDefault();
+      if (historyRecallIndex === -1) {
+        draftRef.current = prompt;
+        setHistoryRecallIndex(0);
+        setPrompt(history[0]);
+      } else if (historyRecallIndex < history.length - 1) {
+        const next = historyRecallIndex + 1;
+        setHistoryRecallIndex(next);
+        setPrompt(history[next]);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (historyRecallIndex === -1) return;
+      e.preventDefault();
+      if (historyRecallIndex === 0) {
+        setHistoryRecallIndex(-1);
+        setPrompt(draftRef.current);
+      } else {
+        const next = historyRecallIndex - 1;
+        setHistoryRecallIndex(next);
+        setPrompt(history[next]);
+      }
+    }
+  };
 
   if (!expanded) {
     return (
@@ -56,6 +118,8 @@ export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced
       </button>
     );
   }
+
+  const generateDisabled = queueing || !prompt.trim() || !comfyuiHealthy;
 
   return (
     <div className="p-4 rounded-xl border border-border bg-surface-overlay/40 space-y-4">
@@ -85,13 +149,31 @@ export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced
         </p>
       )}
 
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="Prompt"
-        rows={2}
-        className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary resize-none focus:ring-2 focus:ring-accent/40 focus:outline-none"
-      />
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] uppercase tracking-wide text-text-muted">Prompt</p>
+          <button
+            type="button"
+            disabled
+            title="Prompt history browser (coming soon)"
+            className="text-[10px] px-2 py-0.5 rounded border border-border text-text-muted opacity-60 cursor-not-allowed"
+          >
+            History
+          </button>
+        </div>
+        <textarea
+          ref={promptRef}
+          value={prompt}
+          onChange={(e) => {
+            setPrompt(e.target.value);
+            if (historyRecallIndex !== -1) setHistoryRecallIndex(-1);
+          }}
+          onKeyDown={handlePromptKeyDown}
+          placeholder="Prompt — ↑ recalls previous prompts"
+          rows={2}
+          className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-text-primary resize-none focus:ring-2 focus:ring-accent/40 focus:outline-none"
+        />
+      </div>
       <textarea
         value={negativePrompt}
         onChange={(e) => setNegativePrompt(e.target.value)}
@@ -163,24 +245,24 @@ export function GeneratePanel({ comfyuiHealthy, busy, onGenerate, onOpenAdvanced
       <div className="flex flex-wrap gap-2 pt-2">
         <button
           type="button"
-          disabled={busy || !prompt.trim() || !comfyuiHealthy}
-          onClick={() => onGenerate({ ...baseParams(), count: 1 })}
+          disabled={generateDisabled}
+          onClick={() => void submitGenerate(1)}
           className="px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium"
         >
-          Generate
+          {queueing ? 'Queuing…' : 'Generate'}
         </button>
         <button
           type="button"
-          disabled={busy || !prompt.trim() || !comfyuiHealthy}
-          onClick={() => onGenerate({ ...baseParams(), count: 4 })}
+          disabled={generateDisabled}
+          onClick={() => void submitGenerate(4)}
           className="px-5 py-2 rounded-xl border border-accent/40 text-accent text-sm font-medium disabled:opacity-40"
         >
-          Generate ×4
+          {queueing ? 'Queuing…' : 'Generate ×4'}
         </button>
         <button
           type="button"
-          disabled={busy || !prompt.trim() || !comfyuiHealthy}
-          onClick={() => onGenerate({ ...baseParams(), count: 1 })}
+          disabled={generateDisabled}
+          onClick={() => void submitGenerate(1)}
           className="px-5 py-2 rounded-xl border border-border text-text-secondary text-sm disabled:opacity-40"
         >
           Variations

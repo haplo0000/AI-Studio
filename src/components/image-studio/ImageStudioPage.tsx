@@ -111,15 +111,17 @@ export function ImageStudioPage({
     return () => window.clearTimeout(id);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleGenerate = async (params: GenerateImageParams) => {
+  const handleGenerate = async (params: GenerateImageParams): Promise<boolean> => {
     setBusy(true);
     onNotify(null, null);
     try {
       const result = await window.aiStudio.imageStudioGenerate(params);
       if (result.jobs) setGenerationJobs(result.jobs);
       onNotify(result.message);
+      return true;
     } catch (err) {
       onNotify(null, err instanceof Error ? err.message : 'Generation failed');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -231,7 +233,7 @@ export function ImageStudioPage({
 
         <GeneratePanel
           comfyuiHealthy={comfyuiHealthy}
-          busy={busy || isGenerating}
+          queueing={busy}
           onGenerate={handleGenerate}
           onOpenAdvanced={onOpenAdvanced}
         />
