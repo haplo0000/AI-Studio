@@ -71,6 +71,7 @@ export interface EditImageParams {
   denoise: number;
   preserveComposition: boolean;
   negativePrompt?: string;
+  sourcePrompt?: string | null;
 }
 
 export interface EditImageResult {

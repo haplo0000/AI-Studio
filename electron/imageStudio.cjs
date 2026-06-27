@@ -906,13 +906,65 @@ function findWorkflowNodes(workflow, classType) {
   return Object.values(workflow).filter((node) => node.class_type === classType);
 }
 
-function buildEditPrompt(editPrompt, preserveComposition) {
-  const base = String(editPrompt || '').trim();
-  if (!base) return base;
-  if (preserveComposition) {
-    return `Same composition, framing, and subject layout. Apply only this edit: ${base}`;
+function buildEditPrompt(editPrompt, preserveComposition, sourcePrompt) {
+  const edit = String(editPrompt || '').trim();
+  if (!edit) return edit;
+
+  const parts = [];
+  const basePrompt = String(sourcePrompt || '').trim();
+  if (basePrompt) {
+    parts.push(basePrompt);
   }
-  return base;
+
+  if (preserveComposition) {
+    parts.push(
+      `Keep the same subject and overall composition, but clearly and visibly apply this edit: ${edit}`,
+    );
+  } else {
+    parts.push(`Transform this image: ${edit}`);
+  }
+
+  if (edit.length < 28) {
+    parts.push('make the change obvious and clearly visible');
+  }
+
+  parts.push('photorealistic, high detail, sharp focus');
+  return parts.join(', ');
+}
+
+function resolveEditDenoise(requested, preserveComposition) {
+  let denoise = Number(requested ?? 0.55);
+  if (!Number.isFinite(denoise)) denoise = 0.55;
+  denoise = Math.min(0.95, Math.max(0.2, denoise));
+  const floor = preserveComposition ? 0.4 : 0.45;
+  denoise = Math.max(floor, denoise);
+  if (preserveComposition) {
+    denoise = Math.min(denoise, 0.65);
+  }
+  return denoise;
+}
+
+function resolveComfyInputDir(settings) {
+  const candidates = [
+    settings.paths?.comfyui ? path.join(settings.paths.comfyui, 'input') : null,
+    path.join('C:\\AI\\StabilityMatrix', 'Data', 'Packages', 'ComfyUI', 'input'),
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+function parseComfyUploadResponse(data, fallbackName) {
+  try {
+    const parsed = JSON.parse(data);
+    const name = parsed.name || fallbackName;
+    const subfolder = parsed.subfolder ? String(parsed.subfolder).replace(/\\/g, '/') : '';
+    if (subfolder) return `${subfolder}/${name}`.replace(/\/+/g, '/');
+    return name;
+  } catch {
+    return fallbackName;
+  }
 }
 
 function stageSourceImage(sourcePath) {
@@ -923,9 +975,8 @@ function stageSourceImage(sourcePath) {
   return { stagedPath, stagedName };
 }
 
-function uploadImageToComfy(base, sourcePath) {
+function uploadImageToComfyFromStaged(base, stagedPath, stagedName) {
   return new Promise((resolve, reject) => {
-    const { stagedPath, stagedName } = stageSourceImage(sourcePath);
     const url = new URL(`${base}/upload/image`);
     const boundary = `----WebKitFormBoundary${crypto.randomBytes(16).toString('hex')}`;
     const fileData = fs.readFileSync(stagedPath);
@@ -970,12 +1021,7 @@ function uploadImageToComfy(base, sourcePath) {
             reject(new Error(`ComfyUI upload failed: HTTP ${res.statusCode}`));
             return;
           }
-          try {
-            const parsed = JSON.parse(data);
-            resolve(parsed.name || stagedName);
-          } catch {
-            resolve(stagedName);
-          }
+          resolve(parseComfyUploadResponse(data, stagedName));
         });
       },
     );
@@ -989,6 +1035,21 @@ function uploadImageToComfy(base, sourcePath) {
   });
 }
 
+function prepareComfyInputImage(settings, base, sourcePath) {
+  const { stagedPath, stagedName } = stageSourceImage(sourcePath);
+  const inputDir = resolveComfyInputDir(settings);
+  if (inputDir) {
+    fs.copyFileSync(stagedPath, path.join(inputDir, stagedName));
+    return Promise.resolve(stagedName);
+  }
+  return uploadImageToComfyFromStaged(base, stagedPath, stagedName);
+}
+
+function uploadImageToComfy(base, sourcePath) {
+  const { stagedPath, stagedName } = stageSourceImage(sourcePath);
+  return uploadImageToComfyFromStaged(base, stagedPath, stagedName);
+}
+
 function queueImageEdit(settings, params) {
   const base = (settings.services?.comfyui || 'http://127.0.0.1:8188').replace(/\/$/, '');
   const sourcePath = path.resolve(String(params.sourcePath || '').replace(/\//g, path.sep));
@@ -997,20 +1058,25 @@ function queueImageEdit(settings, params) {
   }
 
   const negativePrompt = params.negativePrompt || DEFAULT_EDIT_NEGATIVE;
-  let denoise = Math.min(1, Math.max(0.05, Number(params.denoise ?? 0.55)));
-  if (params.preserveComposition) {
-    denoise = Math.min(denoise, 0.45);
-  }
+  const denoise = resolveEditDenoise(params.denoise, params.preserveComposition);
 
   const editPrompt = String(params.editPrompt || '').trim();
   if (!editPrompt) {
     return Promise.reject(new Error('Edit prompt is required'));
   }
 
-  const positivePrompt = buildEditPrompt(editPrompt, params.preserveComposition);
+  const positivePrompt = buildEditPrompt(
+    editPrompt,
+    params.preserveComposition,
+    params.sourcePrompt,
+  );
   const prefix = `aistudio_edit_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
 
-  return uploadImageToComfy(base, sourcePath).then((uploadedName) => {
+  return prepareComfyInputImage(settings, base, sourcePath).then((inputImageName) => {
+    if (!inputImageName) {
+      throw new Error('Failed to stage source image for ComfyUI');
+    }
+
     const workflow = cloneWorkflow(resolveImg2ImgWorkflow());
     const loadNode = findWorkflowNode(workflow, 'LoadImage');
     const ksampler = findWorkflowNode(workflow, 'KSampler');
@@ -1019,11 +1085,11 @@ function queueImageEdit(settings, params) {
       throw new Error('img2img workflow is missing required nodes');
     }
 
-    loadNode.inputs.image = uploadedName;
+    loadNode.inputs.image = inputImageName;
     ksampler.inputs.seed = Math.floor(Math.random() * 1_000_000_000);
     ksampler.inputs.denoise = denoise;
-    if (params.steps != null) ksampler.inputs.steps = params.steps;
-    if (params.cfg != null) ksampler.inputs.cfg = params.cfg;
+    ksampler.inputs.steps = Math.max(Number(ksampler.inputs.steps) || 28, 24);
+    ksampler.inputs.cfg = Math.max(Number(params.cfg ?? ksampler.inputs.cfg) || 6.5, 7);
 
     const positiveId = ksampler.inputs.positive?.[0];
     const negativeId = ksampler.inputs.negative?.[0];
@@ -1058,7 +1124,7 @@ function queueImageEdit(settings, params) {
         cfg: ksampler.inputs.cfg,
         startedAt: Date.now(),
       });
-      return { promptId: result.prompt_id, prefix, denoise };
+      return { promptId: result.prompt_id, prefix, denoise, inputImageName };
     });
   });
 }
@@ -1309,7 +1375,12 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
     const settings = loadSettings();
     try {
       ensureComfyProgressMonitor(settings);
-      const result = await queueImageEdit(settings, params);
+      const database = initDb();
+      const sourceRow = database.prepare('SELECT prompt FROM images WHERE path = ?').get(params.sourcePath);
+      const result = await queueImageEdit(settings, {
+        ...params,
+        sourcePrompt: sourceRow?.prompt || null,
+      });
       const label = `Edit: ${truncateLabel(params.editPrompt)}`;
       registerGenerationJob({
         promptId: result.promptId,
@@ -1321,6 +1392,7 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
       appendLog('info', 'image-studio', 'Image edit queued via ComfyUI', {
         source: params.sourcePath,
         denoise: result.denoise,
+        inputImage: result.inputImageName,
       });
       return {
         ok: true,

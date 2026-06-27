@@ -95,13 +95,13 @@ export function EditImageModal({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] uppercase tracking-wide text-text-muted">
-                Strength (denoise)
+                Edit strength
               </label>
               <span className="text-xs text-text-secondary">{denoise.toFixed(2)}</span>
             </div>
             <input
               type="range"
-              min={0.1}
+              min={0.2}
               max={0.95}
               step={0.05}
               value={denoise}
@@ -109,7 +109,7 @@ export function EditImageModal({
               className="w-full accent-accent"
             />
             <p className="text-[10px] text-text-muted mt-1">
-              Lower = closer to original. Higher = more change.
+              Low = subtle · Medium = visible · High = major change
             </p>
           </div>
 
