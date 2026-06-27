@@ -1,0 +1,22 @@
+{
+  "id": "ollama",
+  "name": "Ollama",
+  "version": "1.0.0",
+  "description": "Local LLM inference service",
+  "category": "service",
+  "icon": "ollama",
+  "status": "active",
+  "capabilities": ["launch", "health"],
+  "launch": {
+    "type": "command",
+    "command": "ollama serve",
+    "title": "Ollama Server",
+    "singleton": true
+  },
+  "health": {
+    "serviceId": "ollama"
+  },
+  "ui": {
+    "surface": "service"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "video-studio",
+  "name": "Video Studio",
+  "version": "0.1.0",
+  "description": "Future video generation module (placeholder)",
+  "category": "creative",
+  "icon": "video",
+  "status": "placeholder",
+  "capabilities": ["placeholder"],
+  "dependencies": {
+    "optional": ["comfyui"]
+  },
+  "ui": {
+    "surface": "placeholder",
+    "message": "Video Studio is not implemented in Phase 2A. Engine selection deferred."
+  }
+}

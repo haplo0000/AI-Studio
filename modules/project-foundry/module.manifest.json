@@ -1,0 +1,18 @@
+{
+  "id": "project-foundry",
+  "name": "Project Foundry",
+  "version": "1.0.0",
+  "description": "Pine Script / TradingView development workspace",
+  "category": "project",
+  "icon": "foundry",
+  "status": "active",
+  "capabilities": ["launch", "open-folder"],
+  "launch": {
+    "type": "project",
+    "pathKey": "paths.project_foundry",
+    "councilProjectId": "project-foundry"
+  },
+  "ui": {
+    "surface": "dashboard"
+  }
+}

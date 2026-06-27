@@ -1,0 +1,18 @@
+{
+  "id": "market-climatology",
+  "name": "Market Climatology",
+  "version": "1.0.0",
+  "description": "Macro regime and market analysis workspace",
+  "category": "project",
+  "icon": "climatology",
+  "status": "active",
+  "capabilities": ["launch", "open-folder"],
+  "launch": {
+    "type": "project",
+    "pathKey": "paths.market_climatology",
+    "councilProjectId": "market-climatology"
+  },
+  "ui": {
+    "surface": "dashboard"
+  }
+}

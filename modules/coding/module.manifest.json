@@ -1,0 +1,23 @@
+{
+  "id": "coding",
+  "name": "Coding",
+  "version": "1.0.0",
+  "description": "Solo coding via Council OS and Cursor",
+  "category": "coding",
+  "icon": "coding",
+  "status": "active",
+  "capabilities": ["launch"],
+  "dependencies": {
+    "services": ["ollama"]
+  },
+  "launch": {
+    "type": "multi",
+    "actions": [
+      { "label": "Council OS (Solo)", "pathKey": "launchers.council_os_vbs" },
+      { "label": "Open Cursor", "type": "cursor" }
+    ]
+  },
+  "ui": {
+    "surface": "launch-pad"
+  }
+}

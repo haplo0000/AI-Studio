@@ -1,0 +1,26 @@
+{
+  "id": "council-os",
+  "name": "Council OS",
+  "version": "1.0.0",
+  "description": "Multi-model deliberation and Solo Mode",
+  "category": "council",
+  "icon": "council",
+  "status": "active",
+  "capabilities": ["launch", "health"],
+  "dependencies": {
+    "services": ["ollama"]
+  },
+  "launch": {
+    "type": "script",
+    "pathKey": "launchers.council_os_vbs",
+    "fallbackPathKey": "launchers.council_os_bat",
+    "singleton": true
+  },
+  "health": {
+    "serviceId": "council_os"
+  },
+  "ui": {
+    "surface": "external-browser",
+    "urlKey": "services.council_os"
+  }
+}

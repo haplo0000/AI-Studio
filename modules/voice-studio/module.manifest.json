@@ -1,0 +1,17 @@
+{
+  "id": "voice-studio",
+  "name": "Voice Studio",
+  "version": "0.1.0",
+  "description": "Future voice STT/TTS module (placeholder)",
+  "category": "creative",
+  "icon": "voice",
+  "status": "placeholder",
+  "capabilities": ["placeholder"],
+  "dependencies": {
+    "optional": ["ollama"]
+  },
+  "ui": {
+    "surface": "placeholder",
+    "message": "Voice Studio is not implemented in Phase 2A. Whisper/Piper integration deferred."
+  }
+}

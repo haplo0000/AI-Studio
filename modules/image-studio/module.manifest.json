@@ -1,0 +1,25 @@
+{
+  "id": "image-studio",
+  "name": "Image Studio",
+  "version": "1.0.0",
+  "description": "ComfyUI image generation (read-only control)",
+  "category": "creative",
+  "icon": "image",
+  "status": "active",
+  "capabilities": ["launch", "health"],
+  "dependencies": {
+    "services": ["comfyui"]
+  },
+  "launch": {
+    "type": "script",
+    "pathKey": "launchers.image_studio_bat",
+    "singleton": true
+  },
+  "health": {
+    "serviceId": "comfyui"
+  },
+  "ui": {
+    "surface": "external-browser",
+    "urlKey": "services.comfyui"
+  }
+}
