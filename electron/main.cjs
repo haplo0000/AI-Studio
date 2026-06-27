@@ -340,16 +340,51 @@ function launchOllamaServe() {
   appendLog('info', 'launch', 'Started ollama serve');
 }
 
+function launchCouncilOsSilent() {
+  const settings = loadSettings();
+  const councilDir = resolvePathKey(settings, 'paths.council_os');
+  if (!councilDir || !fs.existsSync(councilDir)) {
+    throw new Error(`Council OS folder not configured. Set paths.council_os in ${SETTINGS_PATH}`);
+  }
+  const pkg = path.join(councilDir, 'package.json');
+  if (!fs.existsSync(pkg)) {
+    throw new Error(`Council OS not found at ${councilDir}`);
+  }
+  spawn(
+    'cmd.exe',
+    [
+      '/c',
+      'start',
+      '/MIN',
+      'Council OS Dev Server',
+      'cmd',
+      '/c',
+      `cd /d "${councilDir}" && npm run dev`,
+    ],
+    { detached: true, stdio: 'ignore', windowsHide: true },
+  ).unref();
+  appendLog('info', 'launch', 'Started Council OS dev server (silent)', { path: councilDir });
+}
+
+async function openCouncilInBrowser() {
+  const settings = loadSettings();
+  const url = settings.services?.council_os || 'http://localhost:5173';
+  await shell.openExternal(url);
+  appendLog('info', 'launch', 'Opened Council OS', { url });
+}
+
 function initServiceStartup() {
   serviceStartup = createServiceStartup({
     checkOllama,
     checkComfyui,
     checkCouncilOs,
     launchOllamaServe,
+    launchCouncilOsSilent,
     launchScript,
     resolvePathKey,
     loadSettings,
     appendLog,
+    openCouncilInBrowser,
     broadcastStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('studio:workstation-status', status);
@@ -507,6 +542,11 @@ ipcMain.handle('studio:restart-comfyui', async () => {
   return serviceStartup.restartComfyui();
 });
 
+ipcMain.handle('studio:open-council', async () => {
+  if (!serviceStartup) throw new Error('Workstation services not initialized');
+  return serviceStartup.openCouncilOs();
+});
+
 ipcMain.handle('studio:get-logs', async () => readRecentLogs());
 
 ipcMain.handle('studio:launch-module', async (_event, moduleId) => {
@@ -517,6 +557,11 @@ ipcMain.handle('studio:launch-module', async (_event, moduleId) => {
 
   if (manifest.status === 'placeholder') {
     throw new Error(`${manifest.name} is not implemented yet.`);
+  }
+
+  if (moduleId === 'council-os') {
+    if (!serviceStartup) throw new Error('Workstation services not initialized');
+    return serviceStartup.openCouncilOs();
   }
 
   const launch = manifest.launch || {};
@@ -578,10 +623,8 @@ ipcMain.handle('studio:launch-action', async (_event, action) => {
       return { ok: true, message: 'Opened ComfyUI URL' };
     }
     case 'open-council': {
-      const url = settings.services?.council_os || 'http://localhost:5173';
-      await shell.openExternal(url);
-      appendLog('info', 'launch', 'Opened Council OS in browser', { url });
-      return { ok: true, message: 'Opened Council OS URL' };
+      if (!serviceStartup) throw new Error('Workstation services not initialized');
+      return serviceStartup.openCouncilOs();
     }
     case 'open-hub-logs': {
       await shell.openPath(path.join(HUB_ROOT, 'logs'));
@@ -666,13 +709,15 @@ ipcMain.handle('blacksmith:send-message', async (_event, sessionId, content) => 
 });
 
 ipcMain.handle('blacksmith:send-to-council', async (_event, sessionId) => {
-  const settings = loadSettings();
   const session = blacksmith.syncCouncilStatus(blacksmith.loadSession(sessionId));
   const { brief } = blacksmith.packageCouncilBrief(session);
 
-  const vbs = resolvePathKey(settings, 'launchers.council_os_vbs');
-  if (vbs && fs.existsSync(vbs)) {
-    launchScript(vbs, 'Council OS');
+  if (serviceStartup) {
+    try {
+      await serviceStartup.openCouncilOs();
+    } catch (err) {
+      appendLog('warn', 'blacksmith', 'Council OS open failed after brief', { error: err.message });
+    }
   }
 
   await shell.openPath(blacksmith.BRIEFS_DIR);

@@ -42,6 +42,7 @@ const aiStudioApi = {
   prepareWorkstation: () => ipcRenderer.invoke('studio:prepare-workstation'),
   startService: (serviceId) => ipcRenderer.invoke('studio:start-service', serviceId),
   restartComfyui: () => ipcRenderer.invoke('studio:restart-comfyui'),
+  openCouncil: () => ipcRenderer.invoke('studio:open-council'),
   onWorkstationStatus: (callback) => {
     const handler = (_event, status) => callback(status);
     ipcRenderer.on('studio:workstation-status', handler);

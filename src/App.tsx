@@ -262,6 +262,21 @@ export default function App() {
     }
   };
 
+  const handleOpenCouncil = async () => {
+    setWorkstationBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.openCouncil();
+      setActionMessage(result.message);
+      await refreshHealth();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not open Council OS');
+    } finally {
+      setWorkstationBusy(false);
+    }
+  };
+
   const comfyuiHealthy =
     (workstationStatus?.services.comfyui ?? services.find((s) => s.id === 'comfyui'))?.status ===
     'green';
@@ -367,6 +382,7 @@ export default function App() {
         busy={workstationBusy}
         onStartService={(id) => void handleStartService(id)}
         onRestartComfyui={() => void handleRestartComfyui()}
+        onOpenCouncil={() => void handleOpenCouncil()}
       />
 
       {(actionError || actionMessage) && (

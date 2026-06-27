@@ -62,7 +62,7 @@ Opens Electron with Vite on **http://127.0.0.1:5174**. Requires **Ollama** for B
 
 Double-click the **AI Studio** desktop shortcut (create with `scripts\Create-Desktop-Shortcut.ps1`) or run `scripts\Launch-AI-Studio.bat`.
 
-The desktop launcher starts AI Studio and **prepares the local workstation automatically**: Ollama, ComfyUI, and Council OS are checked on startup and started when offline. A startup status panel shows progress and provides manual service controls.
+The desktop launcher opens **AI Studio only** and prepares **background services** automatically (Ollama and ComfyUI). Council OS is an on-demand application — it starts silently when you open it from the workbench, not at startup.
 
 ### Hub layout
 

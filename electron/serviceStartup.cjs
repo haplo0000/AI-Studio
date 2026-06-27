@@ -4,7 +4,10 @@ const fs = require('fs');
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 180000;
 const LAUNCH_COOLDOWN_MS = 20000;
-const SERVICE_ORDER = ['ollama', 'comfyui', 'council_os'];
+/** Background services started automatically on AI Studio launch */
+const AUTO_START_SERVICES = ['ollama', 'comfyui'];
+/** All services shown in workstation status (Council is on-demand) */
+const MONITORED_SERVICES = ['ollama', 'comfyui', 'council_os'];
 
 const STARTING_LABELS = {
   ollama: 'Starting Ollama…',
@@ -44,11 +47,13 @@ function createServiceStartup(deps) {
     checkComfyui,
     checkCouncilOs,
     launchOllamaServe,
+    launchCouncilOsSilent,
     launchScript,
     resolvePathKey,
     loadSettings,
     appendLog,
     broadcastStatus,
+    openCouncilInBrowser,
   } = deps;
 
   const checks = {
@@ -68,13 +73,17 @@ function createServiceStartup(deps) {
 
   function serviceSnapshot(healthMap) {
     const snap = {};
-    for (const id of SERVICE_ORDER) {
+    for (const id of MONITORED_SERVICES) {
       const h = healthMap[id];
       snap[id] = h
         ? { id, label: h.label, status: h.status, message: h.message }
         : { id, label: id, status: 'red', message: 'Unknown' };
     }
     return snap;
+  }
+
+  function isWorkbenchReady(healthMap) {
+    return AUTO_START_SERVICES.every((id) => healthMap[id]?.status === 'green');
   }
 
   function emitStatus(payload) {
@@ -114,15 +123,8 @@ function createServiceStartup(deps) {
         return;
       }
       case 'council_os': {
-        let scriptPath = resolvePathKey(settings, 'launchers.council_os_vbs');
-        if (!scriptPath || !fs.existsSync(scriptPath)) {
-          scriptPath = resolvePathKey(settings, 'launchers.council_os_bat');
-        }
-        if (!scriptPath || !fs.existsSync(scriptPath)) {
-          throw new Error('Council OS launcher not found in settings.yaml');
-        }
-        launchScript(scriptPath, 'Council OS');
-        appendLog('info', 'workstation', 'Launching Council OS', { path: scriptPath });
+        launchCouncilOsSilent();
+        appendLog('info', 'workstation', 'Starting Council OS dev server (silent)');
         return;
       }
       default:
@@ -170,7 +172,7 @@ function createServiceStartup(deps) {
     });
 
     const healthMap = {};
-    for (const id of SERVICE_ORDER) {
+    for (const id of AUTO_START_SERVICES) {
       let health = await probeService(id);
       if (health.status !== 'green') {
         emitStatus({
@@ -193,23 +195,26 @@ function createServiceStartup(deps) {
       });
     }
 
-    const finalServices = await Promise.all(SERVICE_ORDER.map((id) => probeService(id)));
-    const finalMap = {};
-    for (const h of finalServices) finalMap[h.id] = h;
+    healthMap.council_os = await probeService('council_os');
 
-    const allGreen = SERVICE_ORDER.every((id) => finalMap[id]?.status === 'green');
+    const finalMap = {};
+    for (const id of MONITORED_SERVICES) {
+      finalMap[id] = healthMap[id] ?? (await probeService(id));
+    }
+
+    const ready = isWorkbenchReady(finalMap);
     const payload = {
-      phase: allGreen ? 'ready' : 'starting',
-      message: allGreen ? 'Workbench ready' : 'Some services are offline',
-      workbenchReady: allGreen,
+      phase: ready ? 'ready' : 'starting',
+      message: ready ? 'Workbench ready' : 'Some background services are offline',
+      workbenchReady: ready,
       services: serviceSnapshot(finalMap),
     };
     emitStatus(payload);
-    if (allGreen) {
+    if (ready) {
       appendLog('info', 'workstation', 'Workbench ready');
     } else {
       appendLog('warn', 'workstation', 'Workbench not fully ready', {
-        services: SERVICE_ORDER.map((id) => ({ id, status: finalMap[id]?.status })),
+        services: AUTO_START_SERVICES.map((id) => ({ id, status: finalMap[id]?.status })),
       });
     }
     return payload;
@@ -224,7 +229,7 @@ function createServiceStartup(deps) {
   }
 
   async function startServiceManual(id) {
-    if (!SERVICE_ORDER.includes(id)) {
+    if (!MONITORED_SERVICES.includes(id)) {
       throw new Error(`Unknown service: ${id}`);
     }
     emitStatus({
@@ -235,10 +240,10 @@ function createServiceStartup(deps) {
       services: serviceSnapshot({}),
     });
     const health = await ensureService(id, { forceLaunch: true });
-    const all = await Promise.all(SERVICE_ORDER.map((sid) => probeService(sid)));
+    const all = await Promise.all(MONITORED_SERVICES.map((sid) => probeService(sid)));
     const map = {};
     for (const h of all) map[h.id] = h;
-    const ready = SERVICE_ORDER.every((sid) => map[sid]?.status === 'green');
+    const ready = isWorkbenchReady(map);
     const payload = {
       phase: ready ? 'ready' : 'starting',
       message: ready ? 'Workbench ready' : `${health.label} updated`,
@@ -247,6 +252,42 @@ function createServiceStartup(deps) {
     };
     emitStatus(payload);
     return { ok: true, message: `${health.label}: ${health.message}`, services: Object.values(map) };
+  }
+
+  async function openCouncilOs() {
+    const currentMap = {};
+    for (const id of MONITORED_SERVICES) {
+      currentMap[id] = await probeService(id);
+    }
+
+    emitStatus({
+      phase: 'starting',
+      message: STARTING_LABELS.council_os,
+      activeService: 'council_os',
+      workbenchReady: isWorkbenchReady(currentMap),
+      services: serviceSnapshot(currentMap),
+    });
+
+    const health = await ensureService('council_os', { forceLaunch: true });
+    if (health.status !== 'green') {
+      throw new Error(health.message || 'Council OS did not become ready');
+    }
+
+    await openCouncilInBrowser();
+
+    const all = await Promise.all(MONITORED_SERVICES.map((sid) => probeService(sid)));
+    const map = {};
+    for (const h of all) map[h.id] = h;
+    const ready = isWorkbenchReady(map);
+    const payload = {
+      phase: ready ? 'ready' : 'starting',
+      message: 'Council OS opened',
+      workbenchReady: ready,
+      services: serviceSnapshot(map),
+    };
+    emitStatus(payload);
+    appendLog('info', 'workstation', 'Council OS opened');
+    return { ok: true, message: 'Council OS opened' };
   }
 
   async function restartComfyui() {
@@ -262,8 +303,14 @@ function createServiceStartup(deps) {
     prepareWorkstation,
     startServiceManual,
     restartComfyui,
+    openCouncilOs,
     probeService,
   };
 }
 
-module.exports = { createServiceStartup, SERVICE_ORDER, STARTING_LABELS };
+module.exports = {
+  createServiceStartup,
+  AUTO_START_SERVICES,
+  MONITORED_SERVICES,
+  STARTING_LABELS,
+};

@@ -6,6 +6,7 @@ interface WorkstationStartupPanelProps {
   busy: boolean;
   onStartService: (serviceId: string) => void;
   onRestartComfyui: () => void;
+  onOpenCouncil: () => void;
 }
 
 const SERVICE_ROWS = [
@@ -33,6 +34,13 @@ const ROW_ICONS: Record<ReturnType<typeof rowState>, string> = {
   offline: '✕',
 };
 
+function councilRowLabel(state: ReturnType<typeof rowState>, workbenchReady: boolean): string {
+  if (state === 'ready') return 'Council OS running';
+  if (state === 'starting') return 'Starting Council OS…';
+  if (workbenchReady) return 'Council OS — open on demand';
+  return 'Council OS offline';
+}
+
 const ROW_STYLES: Record<ReturnType<typeof rowState>, string> = {
   pending: 'text-text-muted',
   starting: 'text-warning animate-pulse',
@@ -45,6 +53,7 @@ export function WorkstationStartupPanel({
   busy,
   onStartService,
   onRestartComfyui,
+  onOpenCouncil,
 }: WorkstationStartupPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const preparing = status?.phase === 'starting';
@@ -79,18 +88,25 @@ export function WorkstationStartupPanel({
           <ul className="mt-2 space-y-1">
             {SERVICE_ROWS.map(({ id, label }) => {
               const state = rowState(id, status);
+              const isCouncilOptional =
+                id === 'council_os' && status?.workbenchReady && state === 'offline';
+              const rowStyle = isCouncilOptional ? 'text-text-muted' : ROW_STYLES[state];
+              const rowText =
+                id === 'council_os'
+                  ? councilRowLabel(state, status?.workbenchReady === true)
+                  : state === 'ready'
+                    ? `${label} ready`
+                    : state === 'starting'
+                      ? `Starting ${label}…`
+                      : state === 'offline'
+                        ? `${label} offline`
+                        : label;
               return (
-                <li key={id} className={`text-xs flex items-center gap-2 ${ROW_STYLES[state]}`}>
-                  <span className="w-4 text-center font-mono">{ROW_ICONS[state]}</span>
-                  <span>
-                    {state === 'ready'
-                      ? `${label} ready`
-                      : state === 'starting'
-                        ? `Starting ${label}…`
-                        : state === 'offline'
-                          ? `${label} offline`
-                          : label}
+                <li key={id} className={`text-xs flex items-center gap-2 ${rowStyle}`}>
+                  <span className="w-4 text-center font-mono">
+                    {isCouncilOptional ? '○' : ROW_ICONS[state]}
                   </span>
+                  <span>{rowText}</span>
                 </li>
               );
             })}
@@ -122,7 +138,12 @@ export function WorkstationStartupPanel({
             onClick={onRestartComfyui}
           />
           <ServiceButton
-            label="Start Council OS"
+            label="Open Council"
+            disabled={busy}
+            onClick={onOpenCouncil}
+          />
+          <ServiceButton
+            label="Start Council (background)"
             disabled={busy || status?.services.council_os?.status === 'green'}
             onClick={() => onStartService('council_os')}
           />
