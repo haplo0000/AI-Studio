@@ -9,6 +9,7 @@ const ICONS: Record<string, string> = {
   climatology: '📈',
   video: '🎬',
   voice: '🎙️',
+  blacksmith: '🔨',
 };
 
 interface NavRailProps {

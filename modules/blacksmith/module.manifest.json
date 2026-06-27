@@ -1,0 +1,22 @@
+{
+  "id": "blacksmith",
+  "name": "The Blacksmith",
+  "version": "0.1.0",
+  "description": "Creative workshop before the Council (Council OS — planned UI)",
+  "category": "creative",
+  "icon": "blacksmith",
+  "status": "placeholder",
+  "capabilities": ["placeholder"],
+  "dependencies": {
+    "optional": ["ollama"]
+  },
+  "launch": {
+    "type": "project",
+    "pathKey": "paths.council_os",
+    "note": "Blacksmith UI will live in Council OS; launch Council OS until Blacksmith workspace ships."
+  },
+  "ui": {
+    "surface": "placeholder",
+    "message": "The Blacksmith spec is in Council OS (BLACKSMITH.md). UI implementation is planned — use Council OS Solo Mode for interim creative work."
+  }
+}
