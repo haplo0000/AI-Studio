@@ -203,6 +203,14 @@ export const WORKBENCH_SECTIONS: WorkbenchSection[] = [
         kind: 'navigate',
         target: 'launchers',
       },
+      {
+        id: 'stability-matrix',
+        name: 'Stability Matrix',
+        description: 'Open model and package manager',
+        icon: '🧩',
+        kind: 'launch-action',
+        target: 'stability-matrix',
+      },
     ],
   },
 ];

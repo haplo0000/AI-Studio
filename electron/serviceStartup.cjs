@@ -48,6 +48,7 @@ function createServiceStartup(deps) {
     checkCouncilOs,
     launchOllamaServe,
     launchCouncilOsSilent,
+    launchComfyui,
     launchScript,
     resolvePathKey,
     loadSettings,
@@ -105,23 +106,15 @@ function createServiceStartup(deps) {
   }
 
   async function launchService(id) {
-    const settings = loadSettings();
     switch (id) {
       case 'ollama':
         launchOllamaServe();
         appendLog('info', 'workstation', 'Launching Ollama');
         return;
-      case 'comfyui': {
-        const bat =
-          resolvePathKey(settings, 'launchers.comfyui_optimized_bat') ||
-          resolvePathKey(settings, 'launchers.image_studio_bat');
-        if (!bat || !fs.existsSync(bat)) {
-          throw new Error('ComfyUI launcher not found in settings.yaml');
-        }
-        launchScript(bat, 'ComfyUI');
-        appendLog('info', 'workstation', 'Launching ComfyUI', { path: bat });
+      case 'comfyui':
+        launchComfyui();
+        appendLog('info', 'workstation', 'Launching ComfyUI (background)');
         return;
-      }
       case 'council_os': {
         launchCouncilOsSilent();
         appendLog('info', 'workstation', 'Starting Council OS dev server (silent)');

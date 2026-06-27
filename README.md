@@ -67,7 +67,7 @@ Create shortcuts with `scripts\Create-Desktop-Shortcut.ps1`:
 | **AI Studio** | `Launch-AI-Studio.vbs` | Production — no console windows, splash screen while services start |
 | **AI Studio (Developer)** | `Launch-AI-Studio-Developer.bat` | Visible npm/Vite/service consoles for debugging |
 
-The production desktop launcher opens **AI Studio only** (no cmd/PowerShell windows) and prepares **background services** automatically (Ollama and ComfyUI). Council OS is on demand — it starts silently when you open it from the workbench, not at startup.
+The production desktop launcher opens **AI Studio only** (no cmd/PowerShell windows) and prepares **background services** automatically (Ollama and ComfyUI). ComfyUI starts directly from the optimized launcher — **Stability Matrix is not opened** at startup. Use **Utilities → Stability Matrix** to open it manually. Council OS is on demand — it starts silently when you open it from the workbench, not at startup.
 
 ### Hub layout
 

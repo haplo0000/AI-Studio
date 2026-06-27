@@ -391,6 +391,82 @@ function launchCouncilOsSilent() {
   });
 }
 
+/** Args mirror C:\AI\StabilityMatrix\Scripts\Launch-ComfyUI-Optimized.bat */
+const COMFYUI_OPTIMIZED_ARGS = [
+  '-u',
+  'main.py',
+  '--preview-method',
+  'auto',
+  '--use-pytorch-cross-attention',
+  '--enable-manager',
+  '--cuda-malloc',
+  '--bf16-unet',
+  '--bf16-text-enc',
+  '--fast',
+  'fp16_accumulation',
+  'autotune',
+];
+
+function resolveComfyuiInstall(settings) {
+  const comfyDir =
+    resolvePathKey(settings, 'paths.comfyui') ||
+    path.join(
+      resolvePathKey(settings, 'paths.stability_matrix') || 'C:\\AI\\StabilityMatrix',
+      'Data',
+      'Packages',
+      'ComfyUI',
+    );
+  const python = path.join(comfyDir, 'venv', 'Scripts', 'python.exe');
+  return { comfyDir, python };
+}
+
+function launchComfyuiHiddenWrapper(settings) {
+  const bat =
+    resolvePathKey(settings, 'launchers.comfyui_optimized_bat') ||
+    path.join(
+      resolvePathKey(settings, 'paths.stability_matrix') || 'C:\\AI\\StabilityMatrix',
+      'Scripts',
+      'Launch-ComfyUI-Optimized.bat',
+    );
+  const vbs = path.join(REPO_ROOT, 'scripts', 'Launch-ComfyUI-Hidden.vbs');
+  if (!fs.existsSync(vbs)) {
+    throw new Error(`ComfyUI hidden launcher not found: ${vbs}`);
+  }
+  spawnDetached('wscript.exe', [vbs], {
+    env: { ...process.env, COMFYUI_OPTIMIZED_BAT: bat },
+  }).unref();
+  appendLog('info', 'launch', 'Started ComfyUI via hidden wrapper', { bat, hidden: true });
+}
+
+function launchComfyui() {
+  const settings = loadSettings();
+  const optimizedBat = resolvePathKey(settings, 'launchers.comfyui_optimized_bat');
+
+  if (isDeveloperLaunchMode()) {
+    if (optimizedBat && fs.existsSync(optimizedBat)) {
+      launchScript(optimizedBat, 'ComfyUI');
+      return;
+    }
+    throw new Error('ComfyUI optimized launcher not found in settings.yaml');
+  }
+
+  const { comfyDir, python } = resolveComfyuiInstall(settings);
+  if (fs.existsSync(python) && fs.existsSync(path.join(comfyDir, 'main.py'))) {
+    spawnDetached(python, COMFYUI_OPTIMIZED_ARGS, {
+      cwd: comfyDir,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True',
+      },
+    }).unref();
+    appendLog('info', 'launch', 'Started ComfyUI directly (hidden)', { python, cwd: comfyDir });
+    return;
+  }
+
+  launchComfyuiHiddenWrapper(settings);
+}
+
 async function openCouncilInBrowser() {
   const settings = loadSettings();
   const url = settings.services?.council_os || 'http://localhost:5173';
@@ -405,6 +481,7 @@ function initServiceStartup() {
     checkCouncilOs,
     launchOllamaServe,
     launchCouncilOsSilent,
+    launchComfyui,
     launchScript,
     resolvePathKey,
     loadSettings,
