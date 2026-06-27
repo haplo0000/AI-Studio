@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import {
   ASPECT_DIMENSIONS,
   RESOLUTION_OPTIONS,
@@ -10,7 +10,6 @@ import { loadPromptHistory, savePromptToHistory } from '../../lib/promptHistory'
 
 interface GeneratePanelProps {
   comfyuiHealthy: boolean;
-  queueing: boolean;
   onGenerate: (params: GenerateImageParams) => Promise<boolean>;
   onOpenAdvanced: () => void;
 }
@@ -30,11 +29,11 @@ const ASPECTS = Object.entries(ASPECT_DIMENSIONS).map(([id, v]) => ({
 
 export function GeneratePanel({
   comfyuiHealthy,
-  queueing,
   onGenerate,
   onOpenAdvanced,
 }: GeneratePanelProps) {
   const [prompt, setPrompt] = useState('');
+  const [queueing, setQueueing] = useState(false);
   const [negativePrompt, setNegativePrompt] = useState(
     'blurry, low quality, watermark, text, deformed, bad anatomy',
   );
@@ -46,35 +45,63 @@ export function GeneratePanel({
   const [historyRecallIndex, setHistoryRecallIndex] = useState(-1);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef('');
+  const focusAfterQueueRef = useRef(false);
 
-  const baseParams = (): GenerateImageParams => ({
-    prompt,
+  const buildParams = (promptText: string, count: number): GenerateImageParams => ({
+    prompt: promptText,
     negativePrompt,
     style,
     aspect,
     resolution,
+    count,
   });
 
   const focusPrompt = () => {
     requestAnimationFrame(() => {
-      const el = promptRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(0, 0);
+      requestAnimationFrame(() => {
+        const el = promptRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
     });
   };
+
+  useLayoutEffect(() => {
+    if (!focusAfterQueueRef.current || queueing) return;
+    focusAfterQueueRef.current = false;
+    const el = promptRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [queueing]);
 
   const submitGenerate = async (count: number) => {
     if (queueing || !prompt.trim() || !comfyuiHealthy) return;
     const submitted = prompt.trim();
-    const ok = await onGenerate({ ...baseParams(), prompt: submitted, count });
-    if (ok) {
-      setHistory(savePromptToHistory(submitted));
-      setPrompt('');
-      setHistoryRecallIndex(-1);
-      draftRef.current = '';
+
+    setPrompt('');
+    setHistoryRecallIndex(-1);
+    draftRef.current = '';
+    focusAfterQueueRef.current = true;
+    focusPrompt();
+
+    setQueueing(true);
+    try {
+      const ok = await onGenerate(buildParams(submitted, count));
+      if (ok) {
+        setHistory(savePromptToHistory(submitted));
+      } else {
+        setPrompt(submitted);
+      }
+    } finally {
+      setQueueing(false);
       focusPrompt();
     }
+  };
+
+  const keepPromptFocus = (e: { preventDefault: () => void }) => {
+    e.preventDefault();
   };
 
   const handlePromptKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -119,7 +146,7 @@ export function GeneratePanel({
     );
   }
 
-  const generateDisabled = queueing || !prompt.trim() || !comfyuiHealthy;
+  const generateDisabled = !prompt.trim() || !comfyuiHealthy;
 
   return (
     <div className="p-4 rounded-xl border border-border bg-surface-overlay/40 space-y-4">
@@ -246,6 +273,7 @@ export function GeneratePanel({
         <button
           type="button"
           disabled={generateDisabled}
+          onMouseDown={keepPromptFocus}
           onClick={() => void submitGenerate(1)}
           className="px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium"
         >
@@ -254,6 +282,7 @@ export function GeneratePanel({
         <button
           type="button"
           disabled={generateDisabled}
+          onMouseDown={keepPromptFocus}
           onClick={() => void submitGenerate(4)}
           className="px-5 py-2 rounded-xl border border-accent/40 text-accent text-sm font-medium disabled:opacity-40"
         >
@@ -262,6 +291,7 @@ export function GeneratePanel({
         <button
           type="button"
           disabled={generateDisabled}
+          onMouseDown={keepPromptFocus}
           onClick={() => void submitGenerate(1)}
           className="px-5 py-2 rounded-xl border border-border text-text-secondary text-sm disabled:opacity-40"
         >
