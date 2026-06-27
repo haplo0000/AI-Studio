@@ -1,4 +1,6 @@
 import type {
+  EditImageParams,
+  EditImageResult,
   GenerateImageParams,
   GenerateImageResult,
   GenerationJobState,
@@ -30,6 +32,7 @@ export interface AiStudioImageApi {
   imageStudioCopyImage: (filePath: string) => Promise<{ ok: boolean }>;
   imageStudioCopyPrompt: (filePath: string) => Promise<{ ok: boolean; prompt: string }>;
   imageStudioGenerate: (params: GenerateImageParams) => Promise<GenerateImageResult>;
+  imageStudioEditImage: (params: EditImageParams) => Promise<EditImageResult>;
   imageStudioGenerationJobs: () => Promise<{ jobs: GenerationJobState[] }>;
   imageStudioVariations: (filePath: string) => Promise<{ ok: boolean; message: string }>;
   imageStudioUpscale: (filePath: string) => Promise<{ ok: boolean; message: string }>;

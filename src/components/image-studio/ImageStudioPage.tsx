@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
+  EditImageParams,
   GenerateImageParams,
   GenerationJobState,
   ImageRecord,
   ImageStudioStats,
 } from '../../types/imageStudio';
+import { EditImageModal } from './EditImageModal';
 import { GeneratePanel } from './GeneratePanel';
 import { GenerationProgress } from './GenerationProgress';
 import { ImageGallery } from './ImageGallery';
@@ -38,6 +40,7 @@ export function ImageStudioPage({
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJobState[]>([]);
   const [progressNow, setProgressNow] = useState(() => Date.now());
+  const [editImage, setEditImage] = useState<ImageRecord | null>(null);
 
   const isGenerating = generationJobs.some(
     (job) => job.status === 'queued' || job.status === 'running' || job.status === 'saving',
@@ -122,10 +125,27 @@ export function ImageStudioPage({
     }
   };
 
+  const handleEditSubmit = async (params: EditImageParams) => {
+    onNotify(null, null);
+    try {
+      const result = await window.aiStudio.imageStudioEditImage(params);
+      if (result.jobs) setGenerationJobs(result.jobs);
+      setEditImage(null);
+      onNotify(result.message);
+    } catch (err) {
+      onNotify(null, err instanceof Error ? err.message : 'Edit failed');
+      throw err;
+    }
+  };
+
   const handleImageAction = async (action: string, image: ImageRecord) => {
     onNotify(null, null);
     try {
       switch (action) {
+        case 'edit':
+          setViewerIndex(null);
+          setEditImage(image);
+          break;
         case 'reveal':
           await window.aiStudio.imageStudioReveal(image.path);
           break;
@@ -244,6 +264,17 @@ export function ImageStudioPage({
           onIndexChange={setViewerIndex}
           onDelete={handleDelete}
           onAction={handleImageAction}
+        />
+      )}
+
+      {editImage && (
+        <EditImageModal
+          image={editImage}
+          comfyuiHealthy={comfyuiHealthy}
+          busy={busy || isGenerating}
+          onClose={() => setEditImage(null)}
+          onSubmit={handleEditSubmit}
+          onOpenAdvanced={onOpenAdvanced}
         />
       )}
     </div>

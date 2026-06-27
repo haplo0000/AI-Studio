@@ -28,6 +28,9 @@ export interface ImageRecord {
   negative_prompt: string | null;
   generation_time_ms: number | null;
   tags: string | null;
+  parent_image_path: string | null;
+  edit_prompt: string | null;
+  denoise: number | null;
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'saving' | 'complete' | 'error';
@@ -60,6 +63,21 @@ export interface ImageStudioStats {
   lastImageTime: string | null;
   totalImages: number;
   comfyuiHealthy: boolean;
+}
+
+export interface EditImageParams {
+  sourcePath: string;
+  editPrompt: string;
+  denoise: number;
+  preserveComposition: boolean;
+  negativePrompt?: string;
+}
+
+export interface EditImageResult {
+  ok: boolean;
+  message: string;
+  promptId?: string;
+  jobs?: GenerationJobState[];
 }
 
 export interface GenerateImageParams {

@@ -27,6 +27,14 @@ const UPSCALE_WORKFLOW = path.join(
   'upscale',
   'upscale_4x_ultrasharp.json',
 );
+const IMG2IMG_WORKFLOW_CANDIDATES = [
+  path.join('C:\\AI\\StabilityMatrix', 'Data', 'Workflows', 'img2img', 'img2img_sdxl_edit.json'),
+  path.join('C:\\AI\\StabilityMatrix', 'Data', 'Workflows', 'img2img_sdxl_edit.json'),
+];
+const IMG2IMG_WORKFLOW_API_FALLBACK = path.join(__dirname, 'workflows', 'img2img_sdxl_edit_api.json');
+const DEFAULT_EDIT_NEGATIVE =
+  'blurry, low quality, watermark, text, deformed, bad anatomy, artifacts';
+const COMFY_INPUT_STAGING = path.join(HUB_ROOT, 'cache', 'comfy-input');
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const STYLE_SUFFIX = {
@@ -362,6 +370,7 @@ function getElectronModule() {
 function ensureDirs() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.mkdirSync(THUMB_CACHE_DIR, { recursive: true });
+  fs.mkdirSync(COMFY_INPUT_STAGING, { recursive: true });
 }
 
 function getOutputRoot(settings) {
@@ -413,7 +422,21 @@ function initDb() {
       folder
     );
   `);
+  migrateDb(db);
   return db;
+}
+
+function migrateDb(database) {
+  const cols = database.prepare('PRAGMA table_info(images)').all().map((c) => c.name);
+  if (!cols.includes('parent_image_path')) {
+    database.exec('ALTER TABLE images ADD COLUMN parent_image_path TEXT');
+  }
+  if (!cols.includes('edit_prompt')) {
+    database.exec('ALTER TABLE images ADD COLUMN edit_prompt TEXT');
+  }
+  if (!cols.includes('denoise')) {
+    database.exec('ALTER TABLE images ADD COLUMN denoise REAL');
+  }
 }
 
 function upsertFts(row) {
@@ -508,7 +531,11 @@ function upsertImage(filePath, extra = {}) {
          resolution=COALESCE(?, resolution), prompt=COALESCE(?, prompt),
          negative_prompt=COALESCE(?, negative_prompt),
          generation_time_ms=COALESCE(?, generation_time_ms),
-         tags=COALESCE(?, tags), indexed_at=?
+         tags=COALESCE(?, tags),
+         parent_image_path=COALESCE(?, parent_image_path),
+         edit_prompt=COALESCE(?, edit_prompt),
+         denoise=COALESCE(?, denoise),
+         indexed_at=?
          WHERE path=?`,
       )
       .run(
@@ -529,6 +556,9 @@ function upsertImage(filePath, extra = {}) {
         merged.negative_prompt ?? null,
         merged.generation_time_ms ?? null,
         merged.tags ?? null,
+        merged.parent_image_path ?? null,
+        merged.edit_prompt ?? null,
+        merged.denoise ?? null,
         new Date().toISOString(),
         filePath,
       );
@@ -542,8 +572,9 @@ function upsertImage(filePath, extra = {}) {
       `INSERT INTO images (
         path, filename, folder, mtime, size, width, height, timestamp,
         workflow, checkpoint, seed, cfg, steps, resolution,
-        prompt, negative_prompt, generation_time_ms, tags, indexed_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        prompt, negative_prompt, generation_time_ms, tags,
+        parent_image_path, edit_prompt, denoise, indexed_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       filePath,
@@ -564,6 +595,9 @@ function upsertImage(filePath, extra = {}) {
       merged.negative_prompt ?? null,
       merged.generation_time_ms ?? null,
       merged.tags ?? null,
+      merged.parent_image_path ?? null,
+      merged.edit_prompt ?? null,
+      merged.denoise ?? null,
       new Date().toISOString(),
     );
   const inserted = database.prepare('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
@@ -627,11 +661,33 @@ function getDiskSpace(folderPath) {
   return { freeDiskBytes: null, totalDiskBytes: null };
 }
 
+function sortImagesNearParent(rows) {
+  const result = [...rows];
+  for (let pass = 0; pass < result.length; pass++) {
+    let moved = false;
+    for (let i = 0; i < result.length; i++) {
+      const img = result[i];
+      if (!img.parent_image_path) continue;
+      const parentIdx = result.findIndex((row) => row.path === img.parent_image_path);
+      if (parentIdx >= 0 && i !== parentIdx + 1) {
+        const [edit] = result.splice(i, 1);
+        const insertAt = i < parentIdx ? parentIdx : parentIdx + 1;
+        result.splice(insertAt, 0, edit);
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+  }
+  return result;
+}
+
 function listImages({ offset = 0, limit = 60, search = '' } = {}) {
   const database = initDb();
+  let rows;
   if (search.trim()) {
     const term = search.trim().replace(/"/g, '');
-    return database
+    rows = database
       .prepare(
         `SELECT i.* FROM images_fts fts
          JOIN images i ON i.path = fts.path
@@ -640,10 +696,12 @@ function listImages({ offset = 0, limit = 60, search = '' } = {}) {
          LIMIT ? OFFSET ?`,
       )
       .all(`${term}*`, limit, offset);
+  } else {
+    rows = database
+      .prepare('SELECT * FROM images ORDER BY mtime DESC LIMIT ? OFFSET ?')
+      .all(limit, offset);
   }
-  return database
-    .prepare('SELECT * FROM images ORDER BY mtime DESC LIMIT ? OFFSET ?')
-    .all(limit, offset);
+  return sortImagesNearParent(rows);
 }
 
 function getStats(outputRoot) {
@@ -776,6 +834,233 @@ function buildPrompt(params) {
   const styleExtra = STYLE_SUFFIX[params.style] || '';
   const parts = [params.prompt.trim(), styleExtra].filter(Boolean);
   return parts.join(', ');
+}
+
+function cloneWorkflow(workflow) {
+  return JSON.parse(JSON.stringify(workflow));
+}
+
+function convertVisualWorkflowToApi(visual) {
+  const api = {};
+  for (const node of visual.nodes) {
+    const inputs = {};
+    for (const link of visual.links || []) {
+      const [, fromNode, fromSlot, toNode, toSlot] = link;
+      if (toNode !== node.id) continue;
+      const inputDef = (node.inputs || [])[toSlot];
+      if (inputDef?.name) {
+        inputs[inputDef.name] = [String(fromNode), fromSlot];
+      }
+    }
+    const w = node.widgets_values || [];
+    switch (node.type) {
+      case 'CheckpointLoaderSimple':
+        inputs.ckpt_name = w[0];
+        break;
+      case 'VAELoader':
+        inputs.vae_name = w[0];
+        break;
+      case 'LoadImage':
+        inputs.image = w[0] || 'example.png';
+        break;
+      case 'CLIPTextEncode':
+        if (w[0] !== undefined) inputs.text = w[0];
+        break;
+      case 'KSampler':
+        inputs.seed = w[0];
+        inputs.steps = w[2];
+        inputs.cfg = w[3];
+        inputs.sampler_name = w[4];
+        inputs.scheduler = w[5];
+        inputs.denoise = w[6];
+        break;
+      case 'SaveImage':
+        inputs.filename_prefix = w[0];
+        break;
+      default:
+        break;
+    }
+    api[String(node.id)] = { class_type: node.type, inputs };
+  }
+  return api;
+}
+
+function resolveImg2ImgWorkflow() {
+  for (const candidate of IMG2IMG_WORKFLOW_CANDIDATES) {
+    if (!fs.existsSync(candidate)) continue;
+    const raw = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+    if (raw.nodes) return convertVisualWorkflowToApi(raw);
+    return raw;
+  }
+  if (fs.existsSync(IMG2IMG_WORKFLOW_API_FALLBACK)) {
+    return JSON.parse(fs.readFileSync(IMG2IMG_WORKFLOW_API_FALLBACK, 'utf8'));
+  }
+  throw new Error('img2img edit workflow not found');
+}
+
+function findWorkflowNode(workflow, classType) {
+  return Object.values(workflow).find((node) => node.class_type === classType);
+}
+
+function findWorkflowNodes(workflow, classType) {
+  return Object.values(workflow).filter((node) => node.class_type === classType);
+}
+
+function buildEditPrompt(editPrompt, preserveComposition) {
+  const base = String(editPrompt || '').trim();
+  if (!base) return base;
+  if (preserveComposition) {
+    return `Same composition, framing, and subject layout. Apply only this edit: ${base}`;
+  }
+  return base;
+}
+
+function stageSourceImage(sourcePath) {
+  const ext = path.extname(sourcePath) || '.png';
+  const stagedName = `aistudio_src_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+  const stagedPath = path.join(COMFY_INPUT_STAGING, stagedName);
+  fs.copyFileSync(sourcePath, stagedPath);
+  return { stagedPath, stagedName };
+}
+
+function uploadImageToComfy(base, sourcePath) {
+  return new Promise((resolve, reject) => {
+    const { stagedPath, stagedName } = stageSourceImage(sourcePath);
+    const url = new URL(`${base}/upload/image`);
+    const boundary = `----WebKitFormBoundary${crypto.randomBytes(16).toString('hex')}`;
+    const fileData = fs.readFileSync(stagedPath);
+    const prelude = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="type"',
+      '',
+      'input',
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="overwrite"',
+      '',
+      'true',
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="image"; filename="${stagedName}"`,
+      'Content-Type: application/octet-stream',
+      '',
+    ].join('\r\n');
+    const epilogue = `\r\n--${boundary}--\r\n`;
+    const body = Buffer.concat([
+      Buffer.from(`${prelude}\r\n`),
+      fileData,
+      Buffer.from(epilogue),
+    ]);
+
+    const req = http.request(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length,
+        },
+        timeout: 120000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            reject(new Error(`ComfyUI upload failed: HTTP ${res.statusCode}`));
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.name || stagedName);
+          } catch {
+            resolve(stagedName);
+          }
+        });
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('ComfyUI upload timed out'));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function queueImageEdit(settings, params) {
+  const base = (settings.services?.comfyui || 'http://127.0.0.1:8188').replace(/\/$/, '');
+  const sourcePath = path.resolve(String(params.sourcePath || '').replace(/\//g, path.sep));
+  if (!fs.existsSync(sourcePath)) {
+    return Promise.reject(new Error('Source image not found'));
+  }
+
+  const negativePrompt = params.negativePrompt || DEFAULT_EDIT_NEGATIVE;
+  let denoise = Math.min(1, Math.max(0.05, Number(params.denoise ?? 0.55)));
+  if (params.preserveComposition) {
+    denoise = Math.min(denoise, 0.45);
+  }
+
+  const editPrompt = String(params.editPrompt || '').trim();
+  if (!editPrompt) {
+    return Promise.reject(new Error('Edit prompt is required'));
+  }
+
+  const positivePrompt = buildEditPrompt(editPrompt, params.preserveComposition);
+  const prefix = `aistudio_edit_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+
+  return uploadImageToComfy(base, sourcePath).then((uploadedName) => {
+    const workflow = cloneWorkflow(resolveImg2ImgWorkflow());
+    const loadNode = findWorkflowNode(workflow, 'LoadImage');
+    const ksampler = findWorkflowNode(workflow, 'KSampler');
+    const saveNode = findWorkflowNode(workflow, 'SaveImage');
+    if (!loadNode || !ksampler || !saveNode) {
+      throw new Error('img2img workflow is missing required nodes');
+    }
+
+    loadNode.inputs.image = uploadedName;
+    ksampler.inputs.seed = Math.floor(Math.random() * 1_000_000_000);
+    ksampler.inputs.denoise = denoise;
+    if (params.steps != null) ksampler.inputs.steps = params.steps;
+    if (params.cfg != null) ksampler.inputs.cfg = params.cfg;
+
+    const positiveId = ksampler.inputs.positive?.[0];
+    const negativeId = ksampler.inputs.negative?.[0];
+    if (positiveId && workflow[positiveId]) {
+      workflow[positiveId].inputs.text = positivePrompt;
+    } else {
+      const clipNodes = findWorkflowNodes(workflow, 'CLIPTextEncode');
+      if (clipNodes[0]) clipNodes[0].inputs.text = positivePrompt;
+    }
+    if (negativeId && workflow[negativeId]) {
+      workflow[negativeId].inputs.text = negativePrompt;
+    } else {
+      const clipNodes = findWorkflowNodes(workflow, 'CLIPTextEncode');
+      if (clipNodes[1]) clipNodes[1].inputs.text = negativePrompt;
+    }
+
+    saveNode.inputs.filename_prefix = prefix;
+
+    return postJson(`${base}/prompt`, {
+      prompt: workflow,
+      client_id: COMFY_CLIENT_ID,
+    }).then((result) => {
+      pendingGenerations.set(prefix, {
+        prompt: positivePrompt,
+        edit_prompt: editPrompt,
+        parent_image_path: sourcePath,
+        denoise,
+        negative_prompt: negativePrompt,
+        workflow: 'img2img_sdxl_edit',
+        checkpoint: findWorkflowNode(workflow, 'CheckpointLoaderSimple')?.inputs?.ckpt_name,
+        steps: ksampler.inputs.steps,
+        cfg: ksampler.inputs.cfg,
+        startedAt: Date.now(),
+      });
+      return { promptId: result.prompt_id, prefix, denoise };
+    });
+  });
 }
 
 function queueGeneration(settings, params) {
@@ -1017,6 +1302,34 @@ function registerImageStudioIpc(ipcMain, loadSettings, appendLog) {
         markGenerationJobError(job.id, err.message || 'Generation failed');
       }
       throw new Error(err.message || 'Generation failed — is ComfyUI running?');
+    }
+  });
+
+  ipcMain.handle('image-studio:edit-image', async (_event, params) => {
+    const settings = loadSettings();
+    try {
+      ensureComfyProgressMonitor(settings);
+      const result = await queueImageEdit(settings, params);
+      const label = `Edit: ${truncateLabel(params.editPrompt)}`;
+      registerGenerationJob({
+        promptId: result.promptId,
+        prefix: result.prefix,
+        label,
+        batchIndex: null,
+        batchTotal: null,
+      });
+      appendLog('info', 'image-studio', 'Image edit queued via ComfyUI', {
+        source: params.sourcePath,
+        denoise: result.denoise,
+      });
+      return {
+        ok: true,
+        message: 'Edit queued — ComfyUI is executing. The result appears automatically.',
+        promptId: result.promptId,
+        jobs: serializeGenerationJobs(),
+      };
+    } catch (err) {
+      throw new Error(err.message || 'Edit failed — is ComfyUI running?');
     }
   });
 

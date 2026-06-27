@@ -52,6 +52,7 @@ const aiStudioApi = {
   imageStudioCopyImage: (filePath) => ipcRenderer.invoke('image-studio:copy-image', filePath),
   imageStudioCopyPrompt: (filePath) => ipcRenderer.invoke('image-studio:copy-prompt', filePath),
   imageStudioGenerate: (params) => ipcRenderer.invoke('image-studio:generate', params),
+  imageStudioEditImage: (params) => ipcRenderer.invoke('image-studio:edit-image', params),
   imageStudioGenerationJobs: () => ipcRenderer.invoke('image-studio:generation-jobs'),
   imageStudioVariations: (filePath) => ipcRenderer.invoke('image-studio:variations', filePath),
   imageStudioUpscale: (filePath) => ipcRenderer.invoke('image-studio:upscale', filePath),
