@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, protocol, net, Menu } = require('electron');
 const path = require('path');
 
 protocol.registerSchemesAsPrivileged([
@@ -22,6 +22,7 @@ const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 const blacksmith = require('./blacksmith.cjs');
 const { createServiceStartup } = require('./serviceStartup.cjs');
+const { installApplicationMenu, attachEditableContextMenu } = require('./applicationMenu.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
   'C:\\AI\\StabilityMatrix\\Data\\Images',
@@ -548,6 +549,9 @@ function createWindow() {
     console.error('[did-fail-load]', errorCode, errorDescription, validatedURL);
   });
 
+  attachEditableContextMenu(mainWindow.webContents, Menu);
+  mainWindow.setMenuBarVisibility(false);
+
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents
       .executeJavaScript('typeof window.aiStudio')
@@ -572,6 +576,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  installApplicationMenu(Menu);
+  appendLog('info', 'studio', 'Application menu installed (edit shortcuts enabled)');
+
   protocol.handle('media', async (request) => {
     try {
       const filePath = resolveMediaFilePath(request.url);
