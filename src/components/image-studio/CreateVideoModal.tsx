@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { GenerationJobState } from '../../types/imageStudio';
 import type { ImageRecord } from '../../types/imageStudio';
-import type { VideoDuration, VideoSetupStatus } from '../../types/videoStudio';
+import type { VideoDuration, VideoPresetSummary, VideoQualityPreset, VideoSetupStatus } from '../../types/videoStudio';
+import { VIDEO_QUALITY_NOTE } from '../../lib/videoQualityNote';
 import { VideoErrorDialog } from './VideoErrorDialog';
 
 interface CreateVideoModalProps {
@@ -15,6 +16,19 @@ interface CreateVideoModalProps {
 }
 
 const DURATIONS: VideoDuration[] = [2, 4, 6];
+
+function vramRiskClass(risk: VideoPresetSummary['vramRisk']) {
+  switch (risk) {
+    case 'low':
+      return 'text-success';
+    case 'medium':
+      return 'text-warning';
+    case 'high':
+      return 'text-danger';
+    default:
+      return 'text-text-muted';
+  }
+}
 
 function logVideo(step: string, meta?: Record<string, unknown>) {
   console.info(`[video-pipeline:renderer] ${step}`, meta ?? {});
@@ -30,8 +44,11 @@ export function CreateVideoModal({
   onOpenVideoSetup,
 }: CreateVideoModalProps) {
   const [prompt, setPrompt] = useState('');
-  const [duration, setDuration] = useState<VideoDuration>(2);
-  const [motionStrength, setMotionStrength] = useState(0.4);
+  const [qualityPreset, setQualityPreset] = useState<VideoQualityPreset>('balanced');
+  const [duration, setDuration] = useState<VideoDuration>(4);
+  const [motionStrength, setMotionStrength] = useState(0.5);
+  const [presetSummaries, setPresetSummaries] = useState<VideoPresetSummary[]>([]);
+  const [presetsLoaded, setPresetsLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [setup, setSetup] = useState<VideoSetupStatus | null>(null);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -61,16 +78,47 @@ export function CreateVideoModal({
 
   useEffect(() => {
     void window.aiStudio
+      .videoStudioPresetEstimates(image.path)
+      .then((data) => {
+        setPresetSummaries(data.presets);
+        const defaultId = data.defaultPreset;
+        const summary = data.presets.find((p) => p.id === defaultId);
+        setQualityPreset(defaultId);
+        if (summary) {
+          setDuration(summary.defaultDuration);
+          setMotionStrength(summary.defaultMotionStrength);
+        }
+      })
+      .catch((err) => {
+        logVideo('preset-estimates error', { message: err instanceof Error ? err.message : String(err) });
+      })
+      .finally(() => setPresetsLoaded(true));
+  }, [image.path]);
+
+  useEffect(() => {
+    void window.aiStudio
       .videoStudioVramRisk({
         sourcePath: image.path,
         duration,
         motionStrength,
+        qualityPreset,
       })
       .then((risk) => setVramWarning(risk.level !== 'ok' ? risk.message : null))
       .catch((err) => {
         logVideo('vram-risk error', { message: err instanceof Error ? err.message : String(err) });
       });
-  }, [image.path, duration, motionStrength]);
+  }, [image.path, duration, motionStrength, qualityPreset]);
+
+  const activePresetSummary = presetSummaries.find((p) => p.id === qualityPreset);
+
+  const selectPreset = (id: VideoQualityPreset) => {
+    const summary = presetSummaries.find((p) => p.id === id);
+    setQualityPreset(id);
+    if (summary) {
+      setDuration(summary.defaultDuration);
+      setMotionStrength(summary.defaultMotionStrength);
+    }
+  };
 
   const previewSrc = window.aiStudio.getMediaUrl(image.path);
   const setupBlocked = !setupLoading && setup != null && !setup.ready;
@@ -81,6 +129,9 @@ export function CreateVideoModal({
     if (!prompt.trim()) return 'Enter a motion prompt describing how the image should move.';
     if (!comfyuiHealthy) return 'ComfyUI is offline. Start ComfyUI before generating video.';
     if (setupBlocked) return setup?.detail || setup?.message || 'Video model/workflow not installed yet.';
+    if (activePresetSummary?.level === 'block') {
+      return `${activePresetSummary.label} exceeds 8GB VRAM limits for this image. Use Fast Test or shorten duration.`;
+    }
     return null;
   };
 
@@ -109,6 +160,7 @@ export function CreateVideoModal({
       prompt: prompt.trim(),
       duration,
       motionStrength,
+      qualityPreset,
     };
 
     setSubmitting(true);
@@ -214,6 +266,50 @@ export function CreateVideoModal({
               </p>
             )}
 
+            <p className="text-xs text-text-secondary rounded-lg border border-border/50 bg-surface-overlay/30 px-3 py-2">
+              {VIDEO_QUALITY_NOTE}
+            </p>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-text-muted mb-2">Quality preset</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {presetSummaries.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => selectPreset(preset.id)}
+                    className={`text-left rounded-xl border p-3 transition-colors ${
+                      qualityPreset === preset.id
+                        ? 'border-accent bg-accent/10'
+                        : 'border-border bg-surface-overlay/30 hover:border-border-subtle'
+                    }`}
+                  >
+                    <p className="text-sm font-medium text-text-primary">{preset.label}</p>
+                    <p className="text-[10px] text-text-muted mt-0.5 leading-snug">{preset.tagline}</p>
+                    <div className="mt-2 space-y-0.5 text-[10px]">
+                      <p className="text-text-secondary">{preset.estimatedTimeLabel}</p>
+                      <p className={vramRiskClass(preset.vramRisk)}>{preset.vramRiskLabel}</p>
+                      {preset.dims && (
+                        <p className="text-text-muted">
+                          ~{preset.dims.width}×{preset.dims.height} · {preset.defaultDuration}s ·{' '}
+                          {preset.steps} steps
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {!presetsLoaded && (
+                <p className="text-[10px] text-text-muted mt-2">Loading preset estimates…</p>
+              )}
+              {activePresetSummary?.level === 'block' && (
+                <p className="text-xs text-danger mt-2">
+                  This preset is blocked for this image at current duration — choose Fast Test or reduce
+                  duration.
+                </p>
+              )}
+            </div>
+
             <div className="rounded-xl border border-border overflow-hidden bg-surface-overlay/40 aspect-video flex items-center justify-center">
               <img
                 src={previewSrc}
@@ -276,7 +372,7 @@ export function CreateVideoModal({
             <div className="flex flex-wrap gap-2 pt-2">
               <button
                 type="button"
-                disabled={submitting}
+                disabled={submitting || activePresetSummary?.level === 'block'}
                 onClick={() => void handleGenerateClick()}
                 className="px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-sm font-medium"
               >

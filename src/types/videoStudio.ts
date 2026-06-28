@@ -1,4 +1,26 @@
 export type VideoDuration = 2 | 4 | 6;
+export type VideoQualityPreset = 'fast_test' | 'balanced' | 'quality';
+
+export interface VideoPresetSummary {
+  id: VideoQualityPreset;
+  label: string;
+  tagline: string;
+  defaultDuration: VideoDuration;
+  defaultMotionStrength: number;
+  steps: number;
+  estimatedTimeLabel: string;
+  estimatedSecondsMin: number;
+  estimatedSecondsMax: number;
+  vramRisk: 'low' | 'medium' | 'high';
+  vramRiskLabel: string;
+  level: 'ok' | 'warn' | 'block';
+  dims?: { width: number; height: number };
+}
+
+export interface VideoPresetEstimates {
+  defaultPreset: VideoQualityPreset;
+  presets: VideoPresetSummary[];
+}
 
 export interface VideoRecord {
   id: number;
@@ -38,6 +60,7 @@ export interface CreateVideoParams {
   prompt: string;
   duration: VideoDuration;
   motionStrength: number;
+  qualityPreset: VideoQualityPreset;
 }
 
 export interface VramRiskEstimate {
@@ -45,6 +68,13 @@ export interface VramRiskEstimate {
   message: string | null;
   dims?: { width: number; height: number };
   frameLength?: number;
+  preset?: VideoQualityPreset;
+  estimatedTimeLabel?: string;
+  estimatedSecondsMin?: number;
+  estimatedSecondsMax?: number;
+  vramRisk?: 'low' | 'medium' | 'high';
+  vramRiskLabel?: string;
+  steps?: number;
 }
 
 export interface CreateVideoResult {

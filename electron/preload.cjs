@@ -100,6 +100,8 @@ const aiStudioApi = {
   },
   videoStudioSetup: () => ipcRenderer.invoke('video-studio:setup'),
   videoStudioVramRisk: (params) => ipcRenderer.invoke('video-studio:vram-risk', params),
+  videoStudioPresetEstimates: (sourcePath) =>
+    ipcRenderer.invoke('video-studio:preset-estimates', sourcePath),
   videoStudioStart: () => ipcRenderer.invoke('video-studio:start'),
   videoStudioStop: () => ipcRenderer.invoke('video-studio:stop'),
   videoStudioStats: () => ipcRenderer.invoke('video-studio:stats'),

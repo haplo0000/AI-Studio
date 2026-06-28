@@ -56,6 +56,7 @@ async function main() {
     prompt: 'slow cinematic camera push-in, subtle atmospheric motion',
     duration: 2,
     motionStrength: 0.4,
+    qualityPreset: 'fast_test',
   };
 
   const { registerVideoStudioIpc } = videoStudio;

@@ -58,18 +58,16 @@ const REQUIRED_VIDEO_MODELS_5B = [
   { dir: 'vae', file: 'wan2.2_vae.safetensors' },
 ];
 
-/** Conservative limits for ~8GB VRAM (RTX 5060 Laptop). */
+/** @deprecated use preset-based sizing via videoQualityPresets */
 const VRAM_PROFILE = {
   id: 'wan2.2_ti2v_5b_8gb',
-  maxDim: 512,
-  warnPixels: 512 * 384,
-  blockPixels: 640 * 480,
-  maxFrames: 65,
   label: '8GB VRAM (Wan2.2 5B)',
 };
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.gif']);
 const VIDEO_FPS = 16;
+
+const videoQualityPresets = require('./videoQualityPresets.cjs');
 
 /** @type {import('chokidar').FSWatcher | null} */
 let watcher = null;
@@ -417,76 +415,18 @@ async function checkVideoSetup(settings) {
   };
 }
 
-function readImageDimensions(imagePath) {
-  try {
-    const { nativeImage } = require('electron');
-    const img = nativeImage.createFromPath(imagePath);
-    const size = img.getSize();
-    if (size.width > 0 && size.height > 0) {
-      const maxDim = VRAM_PROFILE.maxDim;
-      const scale = Math.min(1, maxDim / Math.max(size.width, size.height));
-      let width = Math.max(64, Math.round((size.width * scale) / 16) * 16);
-      let height = Math.max(64, Math.round((size.height * scale) / 16) * 16);
-      if (width * height > VRAM_PROFILE.warnPixels) {
-        const pixelScale = Math.sqrt(VRAM_PROFILE.warnPixels / (width * height));
-        width = Math.max(64, Math.round((width * pixelScale) / 16) * 16);
-        height = Math.max(64, Math.round((height * pixelScale) / 16) * 16);
-      }
-      return { width, height };
-    }
-  } catch {
-    // ignore
-  }
-  return { width: 512, height: 320 };
+function readImageDimensions(imagePath, qualityPreset = 'fast_test') {
+  const preset = videoQualityPresets.resolvePreset(qualityPreset);
+  return videoQualityPresets.readImageDimensionsForPreset(imagePath, preset);
 }
 
 function estimateVramRisk(params) {
-  const dims = readImageDimensions(params.sourcePath);
-  const frameLength = durationToFrameLength(params.duration);
-  const pixels = dims.width * dims.height;
-  const workload = pixels * frameLength;
-
-  const safeWorkload = 512 * 320 * 33;
-  const warnWorkload = 512 * 512 * 49;
-  const blockWorkload = 640 * 480 * 65;
-
-  if (frameLength > VRAM_PROFILE.maxFrames || pixels > VRAM_PROFILE.blockPixels) {
-    return {
-      level: 'block',
-      message: `This settings combo (${dims.width}×${dims.height}, ${params.duration}s) is likely to exceed 8GB VRAM. Use 2s duration and keep the source image under ${VRAM_PROFILE.maxDim}px on the long edge.`,
-      dims,
-      frameLength,
-    };
-  }
-
-  if (workload > blockWorkload || params.duration >= 6) {
-    return {
-      level: 'block',
-      message: `6-second or high-resolution video may exceed 8GB VRAM on Wan2.2 5B. Try 2s at ≤${VRAM_PROFILE.maxDim}px instead.`,
-      dims,
-      frameLength,
-    };
-  }
-
-  if (workload > warnWorkload || params.duration >= 4 || params.motionStrength > 0.75) {
-    return {
-      level: 'warn',
-      message: `${params.duration}s at ${dims.width}×${dims.height} may be tight on 8GB VRAM. If generation fails, reduce duration to 2s or use a smaller source image.`,
-      dims,
-      frameLength,
-    };
-  }
-
-  if (workload > safeWorkload) {
-    return {
-      level: 'warn',
-      message: `Generation uses ${dims.width}×${dims.height} for ~${params.duration}s — within 8GB limits but close. Prefer 2s for fastest results.`,
-      dims,
-      frameLength,
-    };
-  }
-
-  return { level: 'ok', message: null, dims, frameLength };
+  return videoQualityPresets.estimatePresetRisk({
+    sourcePath: params.sourcePath,
+    qualityPreset: params.qualityPreset || 'fast_test',
+    duration: params.duration,
+    motionStrength: params.motionStrength,
+  });
 }
 
 async function stageImageForComfy(settings, sourcePath) {
@@ -510,10 +450,12 @@ async function stageImageForComfy(settings, sourcePath) {
 
 function mutateVideoWorkflow(workflow, params) {
   const wf = JSON.parse(JSON.stringify(workflow));
-  const dims = readImageDimensions(params.sourcePath);
-  const frameLength = durationToFrameLength(params.duration);
-  const motionStrength = Math.min(1, Math.max(0.1, Number(params.motionStrength ?? 0.4)));
-  const cfg = 3 + motionStrength * 3;
+  const applied = videoQualityPresets.applyPresetToGenerationParams(params);
+  const preset = applied.preset;
+  const dims = videoQualityPresets.readImageDimensionsForPreset(params.sourcePath, preset);
+  const frameLength = durationToFrameLength(applied.duration);
+  const motionStrength = Math.min(1, Math.max(0.1, applied.motionStrength));
+  const cfg = preset.cfgBase + motionStrength * preset.cfgMotionScale;
 
   const loadImage = Object.entries(wf).find(([, n]) => n.class_type === 'LoadImage');
   if (loadImage) loadImage[1].inputs.image = params.inputImageName;
@@ -555,6 +497,7 @@ function mutateVideoWorkflow(workflow, params) {
   }
   for (const sampler of samplers) {
     sampler.inputs.cfg = cfg;
+    sampler.inputs.steps = preset.steps;
     sampler.inputs.seed = params.seed ?? Math.floor(Math.random() * 1_000_000_000);
   }
   const saveVideo = Object.values(wf).find((n) => n.class_type === 'SaveVideo');
@@ -571,6 +514,7 @@ async function queueImageToVideo(settings, params, appendLog = null) {
   log('queueImageToVideo start', {
     sourcePath: params.sourcePath,
     duration: params.duration,
+    qualityPreset: params.qualityPreset,
   });
 
   const setup = await checkVideoSetup(settings);
@@ -746,7 +690,22 @@ function stopVideoWatcher() {
 }
 
 function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
-  ipcMain.handle('video-studio:vram-risk', async (_event, params) => estimateVramRisk(params || {}));
+  ipcMain.handle('video-studio:vram-risk', async (_event, params) =>
+    estimateVramRisk(params || {}),
+  );
+
+  ipcMain.handle('video-studio:preset-estimates', async (_event, sourcePath) => {
+    if (!sourcePath || !fs.existsSync(sourcePath)) {
+      return {
+        defaultPreset: 'fast_test',
+        presets: videoQualityPresets.listPresetSummaries(''),
+      };
+    }
+    return {
+      defaultPreset: videoQualityPresets.getDefaultPreset(sourcePath),
+      presets: videoQualityPresets.listPresetSummaries(sourcePath),
+    };
+  });
 
   ipcMain.handle('video-studio:setup', async () => {
     const settings = loadSettings();
@@ -784,7 +743,7 @@ function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
       sourcePath: params?.sourcePath,
       duration: params?.duration,
       motionStrength: params?.motionStrength,
-      promptLength: String(params?.prompt || '').length,
+      qualityPreset: params?.qualityPreset,
     });
 
     if (!params?.sourcePath) {
