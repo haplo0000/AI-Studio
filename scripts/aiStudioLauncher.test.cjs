@@ -20,7 +20,10 @@ const vbsText = fs.readFileSync(vbs, 'utf8');
 assert.match(vbsText, /--embedded/);
 
 const hidden = fs.readFileSync(hiddenBat, 'utf8');
-assert.match(hidden, /npm\.cmd run dev/);
+assert.match(hidden, /npm\.cmd start/);
+assert.match(hidden, /dist\\index\.html/);
 assert.match(hidden, /AI_STUDIO_LAUNCH_MODE/);
+assert.match(hidden, /Program Files\\nodejs/);
+assert.doesNotMatch(hidden, /npm\.cmd run dev/);
 
 console.log('aiStudioLauncher.test.cjs: ok');
