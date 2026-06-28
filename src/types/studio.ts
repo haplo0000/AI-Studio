@@ -129,6 +129,7 @@ export interface AiStudioApi extends AiStudioImageApi {
   startService: (serviceId: string) => Promise<{ ok: boolean; message: string }>;
   restartComfyui: () => Promise<{ ok: boolean; message: string }>;
   openCouncil: () => Promise<StudioActionResult>;
+  restartCouncil: () => Promise<StudioActionResult>;
   onWorkstationStatus: (callback: (status: WorkstationStatus) => void) => () => void;
   blacksmithCreateSession: (
     workshopId: string | null,

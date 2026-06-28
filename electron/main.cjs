@@ -24,9 +24,9 @@ const blacksmith = require('./blacksmith.cjs');
 const { createServiceStartup } = require('./serviceStartup.cjs');
 const {
   getCouncilServiceUrl,
+  getCouncilProbeUrl,
   isCouncilServiceUrl,
   getCouncilViteLogPath,
-  formatCouncilStartupFailure,
 } = require('./councilConfig.cjs');
 const { probeCouncilReady } = require('./councilProbe.cjs');
 const { launchCouncilDevServer } = require('./councilLaunch.cjs');
@@ -265,7 +265,7 @@ async function checkComfyui(settings) {
 }
 
 async function checkCouncilOs(settings) {
-  const base = getCouncilServiceUrl(settings);
+  const base = getCouncilProbeUrl(settings);
   const result = await probeCouncilReady(base);
   return {
     id: 'council_os',
@@ -479,7 +479,7 @@ function launchComfyui() {
 
 async function openCouncilInBrowser() {
   const settings = loadSettings();
-  const url = getCouncilServiceUrl(settings);
+  const url = getCouncilProbeUrl(settings);
   const ready = await probeCouncilReady(url);
   if (!ready.ok) {
     throw new Error(`Council OS is not responding at ${url} (${ready.error || 'not ready'})`);
@@ -501,8 +501,9 @@ function initServiceStartup() {
     loadSettings,
     appendLog,
     getCouncilServiceUrl,
-    formatCouncilStartupFailure,
     openCouncilInBrowser,
+    probeCouncilReady,
+    launchCouncilDevServer,
     broadcastStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('studio:workstation-status', status);
@@ -670,6 +671,11 @@ ipcMain.handle('studio:start-service', async (_event, serviceId) => {
 ipcMain.handle('studio:restart-comfyui', async () => {
   if (!serviceStartup) throw new Error('Workstation services not initialized');
   return serviceStartup.restartComfyui();
+});
+
+ipcMain.handle('studio:restart-council', async () => {
+  if (!serviceStartup) throw new Error('Workstation services not initialized');
+  return serviceStartup.restartCouncilOs();
 });
 
 ipcMain.handle('studio:open-council', async () => {

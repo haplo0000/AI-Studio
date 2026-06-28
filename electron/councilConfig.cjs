@@ -9,6 +9,11 @@ function getCouncilServiceUrl(settings) {
   return raw.replace(/\/$/, '');
 }
 
+/** Always probe 127.0.0.1:5173 — canonical health target for Council OS. */
+function getCouncilProbeUrl(settings) {
+  return normalizeServiceUrl(getCouncilServiceUrl(settings));
+}
+
 function normalizeServiceUrl(url) {
   try {
     const parsed = new URL(url);
@@ -43,27 +48,12 @@ function readCouncilViteLogTail(lineCount = 20) {
   }
 }
 
-function formatCouncilStartupFailure(health, settings) {
-  const url = getCouncilServiceUrl(settings);
-  const parts = [
-    health?.message || 'Council OS did not respond with HTTP 200.',
-    `Expected URL: ${url}`,
-  ];
-  const logTail = readCouncilViteLogTail();
-  if (logTail) {
-    parts.push('', 'Recent Vite log:', logTail);
-  } else {
-    parts.push('', `No Vite log found at ${getCouncilViteLogPath()}.`);
-  }
-  return parts.join('\n');
-}
-
 module.exports = {
   DEFAULT_COUNCIL_URL,
   getCouncilServiceUrl,
+  getCouncilProbeUrl,
   normalizeServiceUrl,
   isCouncilServiceUrl,
   getCouncilViteLogPath,
   readCouncilViteLogTail,
-  formatCouncilStartupFailure,
 };

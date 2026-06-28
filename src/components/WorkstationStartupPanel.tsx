@@ -12,6 +12,7 @@ interface WorkstationStartupPanelProps {
   onStartService: (serviceId: string) => void;
   onRestartComfyui: () => void;
   onOpenCouncil: () => void;
+  onRestartCouncil: () => void;
 }
 
 const SERVICE_ROWS = [
@@ -40,6 +41,7 @@ export function WorkstationStartupPanel({
   onStartService,
   onRestartComfyui,
   onOpenCouncil,
+  onRestartCouncil,
 }: WorkstationStartupPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const preparing = status?.phase === 'starting';
@@ -126,6 +128,11 @@ export function WorkstationStartupPanel({
             label="Open Council"
             disabled={busy}
             onClick={onOpenCouncil}
+          />
+          <ServiceButton
+            label="Restart Council OS"
+            disabled={busy}
+            onClick={onRestartCouncil}
           />
           <ServiceButton
             label="Start Council (background)"

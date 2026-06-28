@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   DEFAULT_COUNCIL_URL,
   getCouncilServiceUrl,
+  getCouncilProbeUrl,
   isCouncilServiceUrl,
   normalizeServiceUrl,
 } = require('../electron/councilConfig.cjs');
@@ -17,6 +18,7 @@ assert.strictEqual(
 assert.strictEqual(isCouncilServiceUrl(settings, 'http://127.0.0.1:5173'), true);
 assert.strictEqual(isCouncilServiceUrl(settings, 'http://127.0.0.1:8188'), false);
 
-assert.strictEqual(getCouncilServiceUrl({}), DEFAULT_COUNCIL_URL);
+assert.strictEqual(getCouncilProbeUrl(settings), 'http://127.0.0.1:5173');
+assert.strictEqual(getCouncilProbeUrl({}), DEFAULT_COUNCIL_URL);
 
 console.log('councilConfig.test.cjs: ok');

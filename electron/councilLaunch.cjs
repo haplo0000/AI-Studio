@@ -4,20 +4,21 @@ const path = require('path');
 
 const COUNCIL_LAUNCHER_BAT = path.join(__dirname, '..', 'scripts', 'Start-Council-Dev-Server.bat');
 
-function summarizeEnv(env) {
-  const pathValue = env.PATH || env.Path || '';
-  const pathParts = pathValue.split(';').filter(Boolean);
+function buildLaunchRecord({ councilDir, viteLog, shellCommand, serverPid }) {
   return {
-    PATH_entries: pathParts.length,
-    PATH_has_nodejs: pathParts.some((entry) => /nodejs/i.test(entry)),
-    AI_STUDIO_LAUNCH_MODE: env.AI_STUDIO_LAUNCH_MODE || null,
-    LOCALAPPDATA: env.LOCALAPPDATA || null,
+    command: 'npm.cmd run dev',
+    workingDirectory: councilDir,
+    wrapperCommand: shellCommand,
+    launcherBat: COUNCIL_LAUNCHER_BAT,
+    viteLog,
+    wrapperPid: serverPid,
+    serverPid,
   };
 }
 
 /**
- * Start Council OS Vite dev server as a detached Windows process tree.
- * Uses start /MIN + a batch wrapper to avoid cmd quoting failures.
+ * Start Council OS Vite dev server as a detached process.
+ * Uses shell npm.cmd run dev (Windows detached spawn requires shell:true to keep Vite alive).
  */
 function launchCouncilDevServer({ councilDir, viteLog, appendLog, repoRoot = path.join(__dirname, '..') }) {
   if (process.platform !== 'win32') {
@@ -28,84 +29,55 @@ function launchCouncilDevServer({ councilDir, viteLog, appendLog, repoRoot = pat
   if (!fs.existsSync(launcherBat)) {
     throw new Error(`Council launcher not found: ${launcherBat}`);
   }
+  if (!fs.existsSync(path.join(councilDir, 'package.json'))) {
+    throw new Error(`Council OS not found at ${councilDir}`);
+  }
 
-  const env = {
-    ...process.env,
-    COUNCIL_OS_DIR: councilDir,
-    COUNCIL_VITE_LOG: viteLog,
-  };
+  fs.mkdirSync(path.dirname(viteLog), { recursive: true });
+  fs.appendFileSync(viteLog, `\n--- Council OS dev server start ${new Date().toISOString()} ---\n`);
 
-  const spawnArgs = [
-    '/c',
-    'start',
-    '/MIN',
-    'Council OS Dev Server',
-    'cmd.exe',
-    '/c',
-    launcherBat,
-  ];
+  const env = { ...process.env };
+  if (fs.existsSync('C:\\Program Files\\nodejs\\npm.cmd')) {
+    env.PATH = `C:\\Program Files\\nodejs;${env.PATH || ''}`;
+  }
 
-  const spawnOptions = {
+  const shellCommand = `npm.cmd run dev >> "${viteLog.replace(/"/g, '""')}" 2>&1`;
+
+  const child = spawn(shellCommand, {
     env,
+    cwd: councilDir,
+    shell: true,
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'ignore',
     windowsHide: true,
-  };
-
-  const child = spawn('cmd.exe', spawnArgs, spawnOptions);
-  let stderr = '';
-  let stdout = '';
-  child.stderr?.on('data', (chunk) => {
-    stderr += chunk.toString();
-  });
-  child.stdout?.on('data', (chunk) => {
-    stdout += chunk.toString();
   });
 
-  const diagnostics = {
-    executable: process.platform === 'win32' ? 'cmd.exe' : null,
-    spawnArguments: spawnArgs,
-    launcherBat,
-    councilDirectory: councilDir,
+  const launchRecord = buildLaunchRecord({
+    councilDir,
     viteLog,
-    workingDirectory: process.cwd(),
-    environment: summarizeEnv(env),
-    pid: child.pid,
-    stdout: '',
-    stderr: '',
-    exitCode: null,
-    exitSignal: null,
-    wrapperExitedMs: null,
-    wrapperExitedImmediately: null,
-  };
+    shellCommand,
+    serverPid: child.pid,
+  });
 
-  const startedAt = Date.now();
-  child.on('exit', (code, signal) => {
-    diagnostics.exitCode = code;
-    diagnostics.exitSignal = signal;
-    diagnostics.wrapperExitedMs = Date.now() - startedAt;
-    diagnostics.wrapperExitedImmediately = diagnostics.wrapperExitedMs < 2000;
-    diagnostics.stdout = stdout.trim() || null;
-    diagnostics.stderr = stderr.trim() || null;
-
-    appendLog('info', 'launch', 'Council launcher wrapper exited', diagnostics);
-
-    if (code !== 0) {
-      appendLog('error', 'launch', 'Council launcher wrapper failed', diagnostics);
-    }
+  child.on('error', (err) => {
+    appendLog('error', 'launch', 'Council spawn error', {
+      ...launchRecord,
+      error: err.message,
+    });
   });
 
   child.unref();
 
   appendLog('info', 'launch', 'Council OS dev server spawn requested', {
-    ...diagnostics,
-    note: 'Wrapper cmd exits after start /MIN; Vite continues in detached child process.',
+    ...launchRecord,
+    note: 'Detached shell npm.cmd run dev; stdout/stderr appended to vite log.',
   });
 
-  return diagnostics;
+  return launchRecord;
 }
 
 module.exports = {
   COUNCIL_LAUNCHER_BAT,
+  buildLaunchRecord,
   launchCouncilDevServer,
 };

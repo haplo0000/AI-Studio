@@ -333,6 +333,25 @@ export default function App() {
     }
   };
 
+  const handleRestartCouncil = async () => {
+    setWorkstationBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.restartCouncil();
+      await applyCouncilResult(result);
+    } catch (err) {
+      const error = err as Error & { detail?: string };
+      showCouncilFailure(
+        'Could not restart Council OS',
+        error.message || 'Could not restart Council OS',
+        error.detail,
+      );
+    } finally {
+      setWorkstationBusy(false);
+    }
+  };
+
   const handleOpenCouncil = async () => {
     setWorkstationBusy(true);
     setActionError(null);
@@ -464,6 +483,7 @@ export default function App() {
         onStartService={(id) => void handleStartService(id)}
         onRestartComfyui={() => void handleRestartComfyui()}
         onOpenCouncil={() => void handleOpenCouncil()}
+        onRestartCouncil={() => void handleRestartCouncil()}
       />
 
       {(actionError || actionMessage) && (
