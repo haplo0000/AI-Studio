@@ -190,8 +190,8 @@ export const WORKBENCH_SECTIONS: WorkbenchSection[] = [
       },
       {
         id: 'health',
-        name: 'Health',
-        description: 'Service health overview',
+        name: 'Service Diagnostics',
+        description: 'PID, port, health, and restart controls',
         icon: '💚',
         kind: 'navigate',
         target: 'health',

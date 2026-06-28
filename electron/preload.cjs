@@ -46,6 +46,7 @@ function getMediaUrl(filePath) {
 const aiStudioApi = {
   getBootstrap: () => ipcRenderer.invoke('studio:get-bootstrap'),
   refreshHealth: () => ipcRenderer.invoke('studio:refresh-health'),
+  getServiceDiagnostics: () => ipcRenderer.invoke('studio:get-service-diagnostics'),
   getLogs: () => ipcRenderer.invoke('studio:get-logs'),
   launchModule: (moduleId) => ipcRenderer.invoke('studio:launch-module', moduleId),
   launchAction: (action) => ipcRenderer.invoke('studio:launch-action', action),
@@ -62,6 +63,8 @@ const aiStudioApi = {
   blacksmithSendToCouncil: (sessionId) => ipcRenderer.invoke('blacksmith:send-to-council', sessionId),
   prepareWorkstation: () => ipcRenderer.invoke('studio:prepare-workstation'),
   startService: (serviceId) => ipcRenderer.invoke('studio:start-service', serviceId),
+  stopService: (serviceId) => ipcRenderer.invoke('studio:stop-service', serviceId),
+  restartService: (serviceId) => ipcRenderer.invoke('studio:restart-service', serviceId),
   restartComfyui: () => ipcRenderer.invoke('studio:restart-comfyui'),
   openCouncil: () => ipcRenderer.invoke('studio:open-council'),
   restartCouncil: () => ipcRenderer.invoke('studio:restart-council'),

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityLog } from './components/ActivityLog';
 import { BlacksmithWorkspace } from './components/BlacksmithWorkspace';
 import { CurrentWorkshopSelector } from './components/CurrentWorkshopSelector';
-import { HealthPanel } from './components/HealthPanel';
+import { ServiceDiagnosticsPanel } from './components/ServiceDiagnosticsPanel';
 import { ImageStudioPage } from './components/image-studio/ImageStudioPage';
 import { LaunchersPanel } from './components/LaunchersPanel';
 import { ServiceChip } from './components/ServiceChip';
@@ -18,6 +18,7 @@ import type {
   BootstrapData,
   LogEntry,
   ServiceHealth,
+  ServiceDiagnostic,
   StudioActionResult,
   WorkbenchView,
   WorkstationStatus,
@@ -28,6 +29,7 @@ import { waitForAiStudio } from './lib/aiStudioBridge';
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null);
   const [services, setServices] = useState<ServiceHealth[]>([]);
+  const [serviceDiagnostics, setServiceDiagnostics] = useState<ServiceDiagnostic[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [workshops, setWorkshops] = useState<WorkshopEntry[]>([]);
   const [currentWorkshopId, setCurrentWorkshopId] = useState<string | null>(null);
@@ -62,12 +64,19 @@ export default function App() {
     setLogs(next);
   }, []);
 
+  const refreshDiagnostics = useCallback(async () => {
+    if (!window.aiStudio?.getServiceDiagnostics) return;
+    const next = await window.aiStudio.getServiceDiagnostics();
+    setServiceDiagnostics(next);
+  }, []);
+
   const refreshHealth = useCallback(async () => {
     if (!window.aiStudio) return;
     const next = await window.aiStudio.refreshHealth();
     setServices(next);
+    await refreshDiagnostics();
     await refreshLogs();
-  }, [refreshLogs]);
+  }, [refreshLogs, refreshDiagnostics]);
 
   const applyCouncilResult = useCallback(
     async (result: StudioActionResult) => {
@@ -371,6 +380,40 @@ export default function App() {
     }
   };
 
+  const handleRestartService = async (serviceId: string) => {
+    setWorkstationBusy(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await window.aiStudio.restartService(serviceId);
+      if (serviceId === 'council_os' && 'detail' in result) {
+        await applyCouncilResult(result as StudioActionResult);
+        return;
+      }
+      setActionMessage(result.message);
+      await refreshHealth();
+    } catch (err) {
+      if (serviceId === 'council_os') {
+        const error = err as Error & { detail?: string };
+        showCouncilFailure(
+          'Could not restart service',
+          error.message || 'Restart failed',
+          error.detail,
+        );
+      } else {
+        setActionError(err instanceof Error ? err.message : 'Could not restart service');
+      }
+    } finally {
+      setWorkstationBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeView === 'health' && bootstrap) {
+      void refreshDiagnostics();
+    }
+  }, [activeView, bootstrap, refreshDiagnostics]);
+
   const comfyuiHealthy =
     (workstationStatus?.services.comfyui ?? services.find((s) => s.id === 'comfyui'))?.status ===
     'green';
@@ -549,10 +592,12 @@ export default function App() {
           )}
           {activeView === 'health' && (
             <div className="flex-1 flex flex-col min-h-0">
-              <ViewBackBar label="Health" onBack={() => setActiveView('blacksmith')} />
-              <HealthPanel
-                services={services}
+              <ViewBackBar label="Service Diagnostics" onBack={() => setActiveView('blacksmith')} />
+              <ServiceDiagnosticsPanel
+                diagnostics={serviceDiagnostics}
+                busy={workstationBusy}
                 onRefresh={refreshHealth}
+                onRestart={(id) => void handleRestartService(id)}
                 onOpenUrl={handleOpenUrl}
               />
             </div>

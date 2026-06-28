@@ -22,6 +22,19 @@ export interface ServiceHealth {
   url?: string;
 }
 
+export interface ServiceDiagnostic {
+  id: string;
+  label: string;
+  port: number | null;
+  pid: number | null;
+  status: ServiceStatus;
+  health: 'healthy' | 'unhealthy' | 'unknown';
+  message: string;
+  lastError: string | null;
+  url?: string;
+  autoStart?: boolean;
+}
+
 export interface ModuleManifest {
   id: string;
   name: string;
@@ -118,6 +131,7 @@ export interface StudioActionResult {
 export interface AiStudioApi extends AiStudioImageApi {
   getBootstrap: () => Promise<BootstrapData>;
   refreshHealth: () => Promise<ServiceHealth[]>;
+  getServiceDiagnostics: () => Promise<ServiceDiagnostic[]>;
   getLogs: () => Promise<LogEntry[]>;
   launchModule: (moduleId: string) => Promise<StudioActionResult>;
   launchAction: (action: string) => Promise<StudioActionResult>;
@@ -127,6 +141,8 @@ export interface AiStudioApi extends AiStudioImageApi {
   openWorkshopInCursor: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
   prepareWorkstation: () => Promise<WorkstationStatus>;
   startService: (serviceId: string) => Promise<{ ok: boolean; message: string }>;
+  stopService: (serviceId: string) => Promise<{ ok: boolean; message: string }>;
+  restartService: (serviceId: string) => Promise<StudioActionResult | { ok: boolean; message: string }>;
   restartComfyui: () => Promise<{ ok: boolean; message: string }>;
   openCouncil: () => Promise<StudioActionResult>;
   restartCouncil: () => Promise<StudioActionResult>;

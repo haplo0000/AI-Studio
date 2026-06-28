@@ -15,21 +15,12 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
 const { pathToFileURL } = require('url');
-const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 const blacksmith = require('./blacksmith.cjs');
-const { createServiceStartup } = require('./serviceStartup.cjs');
-const {
-  getCouncilServiceUrl,
-  getCouncilProbeUrl,
-  isCouncilServiceUrl,
-  getCouncilViteLogPath,
-} = require('./councilConfig.cjs');
-const { probeCouncilReady } = require('./councilProbe.cjs');
-const { launchCouncilDevServer } = require('./councilLaunch.cjs');
+const { createServiceManager } = require('./serviceManager.cjs');
+const { isCouncilServiceUrl } = require('./councilConfig.cjs');
+const { spawnDetached } = require('./processSpawn.cjs');
 const { installApplicationMenu, attachEditableContextMenu } = require('./applicationMenu.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
@@ -48,24 +39,9 @@ const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5174
 
 /** @type {import('electron').BrowserWindow | null} */
 let mainWindow = null;
-/** @type {ReturnType<typeof createServiceStartup> | null} */
-let serviceStartup = null;
+/** @type {ReturnType<typeof createServiceManager> | null} */
+let serviceManager = null;
 let workstationPrepareTriggered = false;
-
-function isDeveloperLaunchMode() {
-  return process.env.AI_STUDIO_LAUNCH_MODE === 'developer';
-}
-
-function spawnDetached(command, args, options = {}) {
-  const visible = isDeveloperLaunchMode();
-  return spawn(command, args, {
-    detached: true,
-    stdio: visible ? 'inherit' : 'ignore',
-    windowsHide: !visible,
-    shell: options.shell ?? false,
-    ...options,
-  });
-}
 
 function isDevRuntime() {
   return !app.isPackaged && process.env.NODE_ENV !== 'production';
@@ -213,67 +189,29 @@ function resolvePathKey(settings, pathKey) {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function probeUrl(urlString, timeoutMs = 4000) {
-  return new Promise((resolve) => {
-    try {
-      const url = new URL(urlString);
-      const lib = url.protocol === 'https:' ? https : http;
-      const req = lib.request(
-        url,
-        { method: 'GET', timeout: timeoutMs },
-        (res) => {
-          res.resume();
-          resolve({ ok: res.statusCode >= 200 && res.statusCode < 500, status: res.statusCode });
-        },
-      );
-      req.on('timeout', () => {
-        req.destroy();
-        resolve({ ok: false, status: 0, error: 'timeout' });
-      });
-      req.on('error', (err) => resolve({ ok: false, status: 0, error: err.message }));
-      req.end();
-    } catch (err) {
-      resolve({ ok: false, status: 0, error: err.message });
+function launchScript(scriptPath, label) {
+  if (!scriptPath || !fs.existsSync(scriptPath)) {
+    throw new Error(`Launcher not found: ${scriptPath || '(empty)'}`);
+  }
+  const ext = path.extname(scriptPath).toLowerCase();
+  const { isDeveloperLaunchMode } = require('./processSpawn.cjs');
+  const hidden = !isDeveloperLaunchMode();
+
+  if (ext === '.vbs') {
+    const { resolveWscriptExe } = require('./processSpawn.cjs');
+    spawnDetached(resolveWscriptExe(), ['//Nologo', scriptPath]).unref();
+  } else if (ext === '.bat' || ext === '.cmd') {
+    if (hidden) {
+      spawnDetached(process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', ['/c', scriptPath]).unref();
+    } else {
+      spawnDetached(process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', ['/c', 'start', '""', scriptPath]).unref();
     }
-  });
-}
-
-async function checkOllama(settings) {
-  const base = settings.services?.ollama || 'http://127.0.0.1:11434';
-  const url = `${base.replace(/\/$/, '')}/api/tags`;
-  const result = await probeUrl(url);
-  return {
-    id: 'ollama',
-    label: 'Ollama',
-    status: result.ok ? 'green' : 'red',
-    message: result.ok ? 'Running' : result.error || 'Not reachable',
-    url: base,
-  };
-}
-
-async function checkComfyui(settings) {
-  const base = settings.services?.comfyui || 'http://127.0.0.1:8188';
-  const url = `${base.replace(/\/$/, '')}/system_stats`;
-  const result = await probeUrl(url);
-  return {
-    id: 'comfyui',
-    label: 'ComfyUI',
-    status: result.ok ? 'green' : 'red',
-    message: result.ok ? 'Running' : result.error || 'Not reachable',
-    url: base,
-  };
-}
-
-async function checkCouncilOs(settings) {
-  const base = getCouncilProbeUrl(settings);
-  const result = await probeCouncilReady(base);
-  return {
-    id: 'council_os',
-    label: 'Council OS',
-    status: result.ok ? 'green' : 'red',
-    message: result.ok ? 'Running' : result.error || 'Not reachable',
-    url: base,
-  };
+  } else if (ext === '.exe') {
+    spawnDetached(scriptPath, []).unref();
+  } else {
+    shell.openPath(scriptPath);
+  }
+  appendLog('info', 'launch', `Started ${label}`, { path: scriptPath, hidden });
 }
 
 function loadManifests() {
@@ -326,29 +264,6 @@ function readRecentLogs(limit = 80) {
     .reverse();
 }
 
-function launchScript(scriptPath, label) {
-  if (!scriptPath || !fs.existsSync(scriptPath)) {
-    throw new Error(`Launcher not found: ${scriptPath || '(empty)'}`);
-  }
-  const ext = path.extname(scriptPath).toLowerCase();
-  const hidden = !isDeveloperLaunchMode();
-
-  if (ext === '.vbs') {
-    spawnDetached('wscript.exe', [scriptPath]).unref();
-  } else if (ext === '.bat' || ext === '.cmd') {
-    if (hidden) {
-      spawnDetached('cmd.exe', ['/c', scriptPath]).unref();
-    } else {
-      spawnDetached('cmd.exe', ['/c', 'start', '""', scriptPath]).unref();
-    }
-  } else if (ext === '.exe') {
-    spawnDetached(scriptPath, []).unref();
-  } else {
-    shell.openPath(scriptPath);
-  }
-  appendLog('info', 'launch', `Started ${label}`, { path: scriptPath, hidden });
-}
-
 function findCursorExe() {
   const candidates = [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'cursor', 'Cursor.exe'),
@@ -358,6 +273,7 @@ function findCursorExe() {
 }
 
 function launchCursor(folderPath) {
+  const { spawn } = require('child_process');
   const exe = findCursorExe();
   if (exe) {
     const args = folderPath ? [folderPath] : [];
@@ -370,147 +286,12 @@ function launchCursor(folderPath) {
   appendLog('info', 'launch', 'Started Cursor via PATH', { folder: folderPath || null });
 }
 
-function launchOllamaServe() {
-  if (isDeveloperLaunchMode()) {
-    spawnDetached('cmd.exe', ['/c', 'start', 'Ollama Server', 'ollama', 'serve']).unref();
-  } else {
-    spawnDetached('ollama', ['serve'], { shell: true }).unref();
-  }
-  appendLog('info', 'launch', 'Started ollama serve', { hidden: !isDeveloperLaunchMode() });
-}
-
-function launchCouncilOsSilent() {
-  const settings = loadSettings();
-  const councilDir = resolvePathKey(settings, 'paths.council_os');
-  if (!councilDir || !fs.existsSync(councilDir)) {
-    throw new Error(`Council OS folder not configured. Set paths.council_os in ${SETTINGS_PATH}`);
-  }
-  const pkg = path.join(councilDir, 'package.json');
-  if (!fs.existsSync(pkg)) {
-    throw new Error(`Council OS not found at ${councilDir}`);
-  }
-
-  const viteLog = getCouncilViteLogPath();
-  fs.mkdirSync(path.dirname(viteLog), { recursive: true });
-
-  launchCouncilDevServerForStudio({
-    councilDir,
-    viteLog,
+function initServiceManager() {
+  serviceManager = createServiceManager({
+    loadSettings,
+    resolvePathKey,
     appendLog,
     repoRoot: REPO_ROOT,
-  });
-}
-
-function launchCouncilDevServerForStudio(opts) {
-  return launchCouncilDevServer({
-    ...opts,
-    hideConsole: !isDeveloperLaunchMode(),
-  });
-}
-
-/** Args mirror C:\AI\StabilityMatrix\Scripts\Launch-ComfyUI-Optimized.bat */
-const COMFYUI_OPTIMIZED_ARGS = [
-  '-u',
-  'main.py',
-  '--preview-method',
-  'auto',
-  '--use-pytorch-cross-attention',
-  '--enable-manager',
-  '--cuda-malloc',
-  '--bf16-unet',
-  '--bf16-text-enc',
-  '--fast',
-  'fp16_accumulation',
-  'autotune',
-];
-
-function resolveComfyuiInstall(settings) {
-  const comfyDir =
-    resolvePathKey(settings, 'paths.comfyui') ||
-    path.join(
-      resolvePathKey(settings, 'paths.stability_matrix') || 'C:\\AI\\StabilityMatrix',
-      'Data',
-      'Packages',
-      'ComfyUI',
-    );
-  const python = path.join(comfyDir, 'venv', 'Scripts', 'python.exe');
-  return { comfyDir, python };
-}
-
-function launchComfyuiHiddenWrapper(settings) {
-  const bat =
-    resolvePathKey(settings, 'launchers.comfyui_optimized_bat') ||
-    path.join(
-      resolvePathKey(settings, 'paths.stability_matrix') || 'C:\\AI\\StabilityMatrix',
-      'Scripts',
-      'Launch-ComfyUI-Optimized.bat',
-    );
-  const vbs = path.join(REPO_ROOT, 'scripts', 'Launch-ComfyUI-Hidden.vbs');
-  if (!fs.existsSync(vbs)) {
-    throw new Error(`ComfyUI hidden launcher not found: ${vbs}`);
-  }
-  spawnDetached('wscript.exe', [vbs], {
-    env: { ...process.env, COMFYUI_OPTIMIZED_BAT: bat },
-  }).unref();
-  appendLog('info', 'launch', 'Started ComfyUI via hidden wrapper', { bat, hidden: true });
-}
-
-function launchComfyui() {
-  const settings = loadSettings();
-  const optimizedBat = resolvePathKey(settings, 'launchers.comfyui_optimized_bat');
-
-  if (isDeveloperLaunchMode()) {
-    if (optimizedBat && fs.existsSync(optimizedBat)) {
-      launchScript(optimizedBat, 'ComfyUI');
-      return;
-    }
-    throw new Error('ComfyUI optimized launcher not found in settings.yaml');
-  }
-
-  const { comfyDir, python } = resolveComfyuiInstall(settings);
-  if (fs.existsSync(python) && fs.existsSync(path.join(comfyDir, 'main.py'))) {
-    spawnDetached(python, COMFYUI_OPTIMIZED_ARGS, {
-      cwd: comfyDir,
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-        PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True',
-      },
-    }).unref();
-    appendLog('info', 'launch', 'Started ComfyUI directly (hidden)', { python, cwd: comfyDir });
-    return;
-  }
-
-  launchComfyuiHiddenWrapper(settings);
-}
-
-async function openCouncilInBrowser() {
-  const settings = loadSettings();
-  const url = getCouncilProbeUrl(settings);
-  const ready = await probeCouncilReady(url);
-  if (!ready.ok) {
-    throw new Error(`Council OS is not responding at ${url} (${ready.error || 'not ready'})`);
-  }
-  await shell.openExternal(url);
-  appendLog('info', 'launch', 'Opened Council OS', { url });
-}
-
-function initServiceStartup() {
-  serviceStartup = createServiceStartup({
-    checkOllama,
-    checkComfyui,
-    checkCouncilOs,
-    launchOllamaServe,
-    launchCouncilOsSilent,
-    launchComfyui,
-    launchScript,
-    resolvePathKey,
-    loadSettings,
-    appendLog,
-    getCouncilServiceUrl,
-    openCouncilInBrowser,
-    probeCouncilReady,
-    launchCouncilDevServer: launchCouncilDevServerForStudio,
     broadcastStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('studio:workstation-status', status);
@@ -520,9 +301,9 @@ function initServiceStartup() {
 }
 
 function triggerWorkstationPrepare() {
-  if (workstationPrepareTriggered || !serviceStartup) return;
+  if (workstationPrepareTriggered || !serviceManager) return;
   workstationPrepareTriggered = true;
-  void serviceStartup.prepareWorkstation().catch((err) => {
+  void serviceManager.prepareWorkstation().catch((err) => {
     appendLog('error', 'workstation', 'Prepare failed', { error: err.message });
   });
 }
@@ -614,7 +395,7 @@ app.whenReady().then(() => {
 
   getImageStudio().registerImageStudioIpc(ipcMain, loadSettings, appendLog);
   getVideoStudio().registerVideoStudioIpc(ipcMain, loadSettings, appendLog);
-  initServiceStartup();
+  initServiceManager();
   appendLog('info', 'studio', 'AI Studio started (Phase 4 Video MVP)');
   createWindow();
 });
@@ -630,6 +411,9 @@ app.on('will-quit', () => {
   } catch {
     // video studio module not loaded
   }
+  if (serviceManager) {
+    void serviceManager.shutdown();
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -639,11 +423,8 @@ app.on('window-all-closed', () => {
 ipcMain.handle('studio:get-bootstrap', async () => {
   const settings = loadSettings();
   const { entries: workshops, current: currentWorkshopId } = hydrateWorkshops(settings);
-  const services = await Promise.all([
-    checkOllama(settings),
-    checkComfyui(settings),
-    checkCouncilOs(settings),
-  ]);
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  const services = await serviceManager.getHealthSnapshot();
   return {
     settings: {
       ...settings,
@@ -661,33 +442,51 @@ ipcMain.handle('studio:get-bootstrap', async () => {
 });
 
 ipcMain.handle('studio:refresh-health', async () => {
-  const settings = loadSettings();
-  return Promise.all([checkOllama(settings), checkComfyui(settings), checkCouncilOs(settings)]);
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.getHealthSnapshot();
+});
+
+ipcMain.handle('studio:get-service-diagnostics', async () => {
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.getDiagnostics();
 });
 
 ipcMain.handle('studio:prepare-workstation', async () => {
-  if (!serviceStartup) throw new Error('Workstation services not initialized');
-  return serviceStartup.prepareWorkstation();
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.prepareWorkstation();
 });
 
 ipcMain.handle('studio:start-service', async (_event, serviceId) => {
-  if (!serviceStartup) throw new Error('Workstation services not initialized');
-  return serviceStartup.startServiceManual(serviceId);
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.start(serviceId);
+});
+
+ipcMain.handle('studio:stop-service', async (_event, serviceId) => {
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.stop(serviceId);
+});
+
+ipcMain.handle('studio:restart-service', async (_event, serviceId) => {
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  if (serviceId === 'council_os') {
+    return serviceManager.restartCouncil();
+  }
+  return serviceManager.restart(serviceId);
 });
 
 ipcMain.handle('studio:restart-comfyui', async () => {
-  if (!serviceStartup) throw new Error('Workstation services not initialized');
-  return serviceStartup.restartComfyui();
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.restart('comfyui');
 });
 
 ipcMain.handle('studio:restart-council', async () => {
-  if (!serviceStartup) throw new Error('Workstation services not initialized');
-  return serviceStartup.restartCouncilOs();
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.restartCouncil();
 });
 
 ipcMain.handle('studio:open-council', async () => {
-  if (!serviceStartup) throw new Error('Workstation services not initialized');
-  return serviceStartup.openCouncilOs();
+  if (!serviceManager) throw new Error('Workstation services not initialized');
+  return serviceManager.openCouncil();
 });
 
 ipcMain.handle('studio:get-logs', async () => readRecentLogs());
@@ -703,15 +502,15 @@ ipcMain.handle('studio:launch-module', async (_event, moduleId) => {
   }
 
   if (moduleId === 'council-os') {
-    if (!serviceStartup) throw new Error('Workstation services not initialized');
-    return serviceStartup.openCouncilOs();
+    if (!serviceManager) throw new Error('Workstation services not initialized');
+    return serviceManager.openCouncil();
   }
 
   const launch = manifest.launch || {};
 
   if (launch.type === 'command' && moduleId === 'ollama') {
-    launchOllamaServe();
-    return { ok: true, message: 'Ollama server launch requested' };
+    if (!serviceManager) throw new Error('Workstation services not initialized');
+    return serviceManager.start('ollama');
   }
 
   if (launch.type === 'project') {
@@ -766,8 +565,8 @@ ipcMain.handle('studio:launch-action', async (_event, action) => {
       return { ok: true, message: 'Opened ComfyUI URL' };
     }
     case 'open-council': {
-      if (!serviceStartup) throw new Error('Workstation services not initialized');
-      return serviceStartup.openCouncilOs();
+      if (!serviceManager) throw new Error('Workstation services not initialized');
+      return serviceManager.openCouncil();
     }
     case 'open-hub-logs': {
       await shell.openPath(path.join(HUB_ROOT, 'logs'));
@@ -785,8 +584,8 @@ ipcMain.handle('studio:launch-action', async (_event, action) => {
 ipcMain.handle('studio:open-url', async (_event, url) => {
   const settings = loadSettings();
   if (isCouncilServiceUrl(settings, url)) {
-    if (!serviceStartup) throw new Error('Workstation services not initialized');
-    const result = await serviceStartup.openCouncilOs();
+    if (!serviceManager) throw new Error('Workstation services not initialized');
+    const result = await serviceManager.openCouncil();
     if (!result.ok) {
       const err = new Error(result.message);
       err.detail = result.detail;
@@ -866,9 +665,9 @@ ipcMain.handle('blacksmith:send-to-council', async (_event, sessionId) => {
   const session = blacksmith.syncCouncilStatus(blacksmith.loadSession(sessionId));
   const { brief } = blacksmith.packageCouncilBrief(session);
 
-  if (serviceStartup) {
+  if (serviceManager) {
     try {
-      const result = await serviceStartup.openCouncilOs();
+      const result = await serviceManager.openCouncil();
       if (!result.ok) {
         appendLog('warn', 'blacksmith', 'Council OS open failed after brief', {
           error: result.message,
