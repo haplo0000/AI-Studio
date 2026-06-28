@@ -29,6 +29,7 @@ const {
   formatCouncilStartupFailure,
 } = require('./councilConfig.cjs');
 const { probeCouncilReady } = require('./councilProbe.cjs');
+const { launchCouncilDevServer } = require('./councilLaunch.cjs');
 const { installApplicationMenu, attachEditableContextMenu } = require('./applicationMenu.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
@@ -391,26 +392,12 @@ function launchCouncilOsSilent() {
 
   const viteLog = getCouncilViteLogPath();
   fs.mkdirSync(path.dirname(viteLog), { recursive: true });
-  const devCmd = `cd /d "${councilDir}" && npm run dev >> "${viteLog}" 2>&1`;
 
-  if (isDeveloperLaunchMode()) {
-    spawnDetached('cmd.exe', [
-      '/c',
-      'start',
-      '/MIN',
-      'Council OS Dev Server',
-      'cmd',
-      '/c',
-      devCmd,
-    ]).unref();
-  } else {
-    spawnDetached('cmd.exe', ['/c', devCmd], { env: process.env }).unref();
-  }
-  appendLog('info', 'launch', 'Started Council OS dev server (silent)', {
-    path: councilDir,
-    url: getCouncilServiceUrl(settings),
+  launchCouncilDevServer({
+    councilDir,
     viteLog,
-    hidden: !isDeveloperLaunchMode(),
+    appendLog,
+    repoRoot: REPO_ROOT,
   });
 }
 
