@@ -7,14 +7,35 @@ const PRELOAD_LOG = path.join('C:\\AI\\AIStudio', 'logs', 'preload.log');
 function logPreload(message, meta = {}) {
   try {
     fs.mkdirSync(path.dirname(PRELOAD_LOG), { recursive: true });
-    fs.appendFileSync(
-      PRELOAD_LOG,
-      `${JSON.stringify({ ts: new Date().toISOString(), message, meta })}\n`,
-      'utf8',
-    );
+    const line = JSON.stringify({ ts: new Date().toISOString(), layer: 'preload', message, meta });
+    fs.appendFileSync(PRELOAD_LOG, `${line}\n`, 'utf8');
+    console.info(`[preload] ${message}`, meta);
   } catch {
     // ignore log write failures
   }
+}
+
+function invokeVideoGenerate(params) {
+  logPreload('videoStudioGenerate → IPC', {
+    sourcePath: params?.sourcePath,
+    duration: params?.duration,
+    motionStrength: params?.motionStrength,
+    promptLength: params?.prompt?.length ?? 0,
+  });
+  return ipcRenderer
+    .invoke('video-studio:generate', params)
+    .then((result) => {
+      logPreload('videoStudioGenerate ← IPC', {
+        ok: result?.ok,
+        message: result?.message,
+        jobCount: result?.jobs?.length ?? 0,
+      });
+      return result;
+    })
+    .catch((err) => {
+      logPreload('videoStudioGenerate IPC error', { error: err?.message || String(err) });
+      throw err;
+    });
 }
 
 function getMediaUrl(filePath) {
@@ -83,7 +104,9 @@ const aiStudioApi = {
   videoStudioStop: () => ipcRenderer.invoke('video-studio:stop'),
   videoStudioStats: () => ipcRenderer.invoke('video-studio:stats'),
   videoStudioList: (opts) => ipcRenderer.invoke('video-studio:list', opts),
-  videoStudioGenerate: (params) => ipcRenderer.invoke('video-studio:generate', params),
+  videoStudioGenerate: (params) => invokeVideoGenerate(params),
+  /** @deprecated alias — use videoStudioGenerate */
+  imageStudioCreateVideo: (params) => invokeVideoGenerate(params),
   videoStudioReveal: (filePath) => ipcRenderer.invoke('video-studio:reveal', filePath),
   videoStudioOpenFolder: (folderPath) => ipcRenderer.invoke('video-studio:open-folder', folderPath),
   videoStudioOpenViewer: (filePath) => ipcRenderer.invoke('video-studio:open-viewer', filePath),

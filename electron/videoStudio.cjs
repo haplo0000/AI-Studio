@@ -62,8 +62,9 @@ const REQUIRED_VIDEO_MODELS_5B = [
 const VRAM_PROFILE = {
   id: 'wan2.2_ti2v_5b_8gb',
   maxDim: 512,
-  maxPixels: 512 * 384,
-  maxFrames: 49,
+  warnPixels: 512 * 384,
+  blockPixels: 640 * 480,
+  maxFrames: 65,
   label: '8GB VRAM (Wan2.2 5B)',
 };
 
@@ -426,8 +427,8 @@ function readImageDimensions(imagePath) {
       const scale = Math.min(1, maxDim / Math.max(size.width, size.height));
       let width = Math.max(64, Math.round((size.width * scale) / 16) * 16);
       let height = Math.max(64, Math.round((size.height * scale) / 16) * 16);
-      if (width * height > VRAM_PROFILE.maxPixels) {
-        const pixelScale = Math.sqrt(VRAM_PROFILE.maxPixels / (width * height));
+      if (width * height > VRAM_PROFILE.warnPixels) {
+        const pixelScale = Math.sqrt(VRAM_PROFILE.warnPixels / (width * height));
         width = Math.max(64, Math.round((width * pixelScale) / 16) * 16);
         height = Math.max(64, Math.round((height * pixelScale) / 16) * 16);
       }
@@ -446,10 +447,10 @@ function estimateVramRisk(params) {
   const workload = pixels * frameLength;
 
   const safeWorkload = 512 * 320 * 33;
-  const warnWorkload = 512 * 384 * 49;
+  const warnWorkload = 512 * 512 * 49;
   const blockWorkload = 640 * 480 * 65;
 
-  if (frameLength > VRAM_PROFILE.maxFrames || pixels > VRAM_PROFILE.maxPixels) {
+  if (frameLength > VRAM_PROFILE.maxFrames || pixels > VRAM_PROFILE.blockPixels) {
     return {
       level: 'block',
       message: `This settings combo (${dims.width}×${dims.height}, ${params.duration}s) is likely to exceed 8GB VRAM. Use 2s duration and keep the source image under ${VRAM_PROFILE.maxDim}px on the long edge.`,
@@ -562,7 +563,16 @@ function mutateVideoWorkflow(workflow, params) {
   return wf;
 }
 
-async function queueImageToVideo(settings, params) {
+async function queueImageToVideo(settings, params, appendLog = null) {
+  const log = (step, meta = {}) => {
+    if (appendLog) appendLog('info', 'video-pipeline', step, meta);
+  };
+
+  log('queueImageToVideo start', {
+    sourcePath: params.sourcePath,
+    duration: params.duration,
+  });
+
   const setup = await checkVideoSetup(settings);
   if (!setup.ready) {
     const err = new Error(setup.message);
@@ -570,6 +580,7 @@ async function queueImageToVideo(settings, params) {
     err.detail = setup.detail;
     throw err;
   }
+  log('setup check passed', { workflow: setup.workflow });
 
   const vram = estimateVramRisk(params);
   if (vram.level === 'block') {
@@ -578,11 +589,22 @@ async function queueImageToVideo(settings, params) {
     err.detail = vram.message;
     throw err;
   }
+  log('VRAM check passed', { level: vram.level, dims: vram.dims });
 
   const workflow = loadVideoWorkflowApi();
+  if (!workflow) {
+    const err = new Error('Video workflow not loaded');
+    err.code = 'VIDEO_SETUP';
+    err.detail = 'Could not load Wan2.2 5B API workflow JSON.';
+    throw err;
+  }
+  log('workflow loaded', { nodeCount: Object.keys(workflow).length });
+
   const base = (settings.services?.comfyui || 'http://127.0.0.1:8188').replace(/\/$/, '');
   const prefix = `aistudio_video_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
   const inputImageName = await stageImageForComfy(settings, params.sourcePath);
+  log('source image staged', { inputImageName });
+
   const promptWorkflow = mutateVideoWorkflow(workflow, {
     ...params,
     inputImageName,
@@ -590,10 +612,22 @@ async function queueImageToVideo(settings, params) {
   });
 
   const bridge = getImageStudioBridge();
+  log('posting to ComfyUI /prompt', { base, prefix });
   const result = await bridge.postJson(`${base}/prompt`, {
     prompt: promptWorkflow,
     client_id: bridge.COMFY_CLIENT_ID,
   });
+
+  if (!result?.prompt_id) {
+    const detail =
+      typeof result === 'object' && result !== null
+        ? JSON.stringify(result).slice(0, 400)
+        : String(result);
+    const err = new Error('ComfyUI did not accept the video workflow');
+    err.code = 'VIDEO_COMFY';
+    err.detail = `No prompt_id returned. ComfyUI response: ${detail}`;
+    throw err;
+  }
 
   pendingVideos.set(prefix, {
     prompt: params.prompt,
@@ -744,9 +778,44 @@ function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
   ipcMain.handle('video-studio:generate', async (_event, params) => {
     const settings = loadSettings();
     const bridge = getImageStudioBridge();
+    const log = (step, meta = {}) => appendLog('info', 'video-pipeline', step, meta);
+
+    log('IPC video-studio:generate received', {
+      sourcePath: params?.sourcePath,
+      duration: params?.duration,
+      motionStrength: params?.motionStrength,
+      promptLength: String(params?.prompt || '').length,
+    });
+
+    if (!params?.sourcePath) {
+      return {
+        ok: false,
+        message: 'Missing source image',
+        detail: 'No source image path was provided to the video generator.',
+      };
+    }
+    if (!fs.existsSync(params.sourcePath)) {
+      return {
+        ok: false,
+        message: 'Source image not found',
+        detail: `File does not exist: ${params.sourcePath}`,
+      };
+    }
+    if (!String(params.prompt || '').trim()) {
+      return {
+        ok: false,
+        message: 'Missing motion prompt',
+        detail: 'Enter a prompt describing the motion you want.',
+      };
+    }
+
     try {
       bridge.ensureComfyProgressMonitor(settings);
-      const result = await queueImageToVideo(settings, params);
+      log('ComfyUI progress monitor active');
+
+      const result = await queueImageToVideo(settings, params, appendLog);
+      log('ComfyUI request sent', { promptId: result.promptId, prefix: result.prefix });
+
       const label = `Video: ${String(params.prompt || '').slice(0, 40)}`;
       bridge.registerGenerationJob({
         promptId: result.promptId,
@@ -757,13 +826,25 @@ function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
       appendLog('info', 'video-studio', 'Video generation queued', {
         source: params.sourcePath,
         duration: params.duration,
+        promptId: result.promptId,
       });
+
+      const jobs = bridge.serializeGenerationJobs();
+      log('Generation job registered', { jobCount: jobs.length, promptId: result.promptId });
+
       return {
         ok: true,
         message: 'Video queued — ComfyUI is generating. It appears automatically when ready.',
-        jobs: bridge.serializeGenerationJobs(),
+        jobs,
       };
     } catch (err) {
+      appendLog('error', 'video-pipeline', 'Video generation failed', {
+        code: err.code,
+        message: err.message,
+        detail: err.detail,
+        stack: err.stack,
+      });
+
       if (err.code === 'VIDEO_SETUP') {
         return {
           ok: false,
@@ -780,7 +861,19 @@ function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
           detail: err.detail,
         };
       }
-      throw err;
+      if (err.code === 'VIDEO_COMFY') {
+        return {
+          ok: false,
+          message: err.message,
+          detail: err.detail,
+        };
+      }
+
+      return {
+        ok: false,
+        message: 'Video generation failed',
+        detail: err.message || 'Unknown error in main process',
+      };
     }
   });
 

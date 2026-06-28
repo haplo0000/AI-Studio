@@ -199,26 +199,8 @@ export function ImageStudioPage({
     }
   };
 
-  const handleVideoSubmit = async (params: {
-    sourcePath: string;
-    prompt: string;
-    duration: 2 | 4 | 6;
-    motionStrength: number;
-  }) => {
-    onNotify(null, null);
-    try {
-      const result = await window.aiStudio.videoStudioGenerate(params);
-      if (result.jobs) setGenerationJobs(result.jobs);
-      if (result.setupRequired || result.vramBlocked) {
-        onNotify(null, result.detail || result.message);
-        return;
-      }
-      setVideoSourceImage(null);
-      onNotify(result.message);
-    } catch (err) {
-      onNotify(null, err instanceof Error ? err.message : 'Video generation failed');
-      throw err;
-    }
+  const handleVideoQueued = (jobs: GenerationJobState[]) => {
+    setGenerationJobs(jobs);
   };
 
   const handleDelete = async (image: ImageRecord) => {
@@ -311,9 +293,9 @@ export function ImageStudioPage({
         <CreateVideoModal
           image={videoSourceImage}
           comfyuiHealthy={comfyuiHealthy}
-          busy={busy || isGenerating}
           onClose={() => setVideoSourceImage(null)}
-          onSubmit={handleVideoSubmit}
+          onQueued={handleVideoQueued}
+          onNotify={onNotify}
           onOpenAdvanced={onOpenAdvanced}
           onOpenVideoSetup={() => void window.aiStudio.videoStudioOpenSetup()}
         />

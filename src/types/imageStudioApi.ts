@@ -49,6 +49,8 @@ export interface AiStudioImageApi {
   videoStudioStats: () => Promise<import('./videoStudio').VideoStudioStats>;
   videoStudioList: (opts?: { offset?: number; limit?: number }) => Promise<import('./videoStudio').VideoRecord[]>;
   videoStudioGenerate: (params: import('./videoStudio').CreateVideoParams) => Promise<import('./videoStudio').CreateVideoResult>;
+  /** Alias for videoStudioGenerate */
+  imageStudioCreateVideo: (params: import('./videoStudio').CreateVideoParams) => Promise<import('./videoStudio').CreateVideoResult>;
   videoStudioReveal: (filePath: string) => Promise<{ ok: boolean }>;
   videoStudioOpenFolder: (folderPath?: string) => Promise<{ ok: boolean }>;
   videoStudioOpenViewer: (filePath: string) => Promise<{ ok: boolean }>;
