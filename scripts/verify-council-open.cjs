@@ -41,6 +41,10 @@ async function openCouncilInBrowser() {
   appendLog('info', 'verify', 'Would open browser (probe OK)', { url });
 }
 
+function launchCouncilDevServerHidden(opts) {
+  return launchCouncilDevServer({ ...opts, hideConsole: true });
+}
+
 (async () => {
   console.log('Before:', getListenersOnPort(COUNCIL_PORT));
   const result = await openCouncilFlow({
@@ -48,7 +52,7 @@ async function openCouncilInBrowser() {
     settings: loadSettings(),
     resolvePathKey,
     probeCouncilReady,
-    launchCouncilDevServer,
+    launchCouncilDevServer: launchCouncilDevServerHidden,
     openCouncilInBrowser,
     appendLog,
   });

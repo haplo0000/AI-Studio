@@ -393,11 +393,18 @@ function launchCouncilOsSilent() {
   const viteLog = getCouncilViteLogPath();
   fs.mkdirSync(path.dirname(viteLog), { recursive: true });
 
-  launchCouncilDevServer({
+  launchCouncilDevServerForStudio({
     councilDir,
     viteLog,
     appendLog,
     repoRoot: REPO_ROOT,
+  });
+}
+
+function launchCouncilDevServerForStudio(opts) {
+  return launchCouncilDevServer({
+    ...opts,
+    hideConsole: !isDeveloperLaunchMode(),
   });
 }
 
@@ -503,7 +510,7 @@ function initServiceStartup() {
     getCouncilServiceUrl,
     openCouncilInBrowser,
     probeCouncilReady,
-    launchCouncilDevServer,
+    launchCouncilDevServer: launchCouncilDevServerForStudio,
     broadcastStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('studio:workstation-status', status);
