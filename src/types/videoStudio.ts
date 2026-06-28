@@ -30,8 +30,9 @@ export interface VideoSetupStatus {
   detail?: string;
   missingModels?: string[];
   workflow?: string;
+  model?: string;
+  vramProfile?: string;
 }
-
 export interface CreateVideoParams {
   sourcePath: string;
   prompt: string;
@@ -39,11 +40,19 @@ export interface CreateVideoParams {
   motionStrength: number;
 }
 
+export interface VramRiskEstimate {
+  level: 'ok' | 'warn' | 'block';
+  message: string | null;
+  dims?: { width: number; height: number };
+  frameLength?: number;
+}
+
 export interface CreateVideoResult {
   ok: boolean;
   message: string;
   detail?: string;
   setupRequired?: boolean;
+  vramBlocked?: boolean;
   jobs?: import('./imageStudio').GenerationJobState[];
 }
 

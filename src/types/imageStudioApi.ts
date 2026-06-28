@@ -41,6 +41,9 @@ export interface AiStudioImageApi {
   onImageStudioChanged: (callback: (event: ImageStudioChangeEvent) => void) => () => void;
   onGenerationProgress: (callback: (event: GenerationProgressEvent) => void) => () => void;
   videoStudioSetup: () => Promise<import('./videoStudio').VideoSetupStatus>;
+  videoStudioVramRisk: (
+    params: Pick<import('./videoStudio').CreateVideoParams, 'sourcePath' | 'duration' | 'motionStrength'>,
+  ) => Promise<import('./videoStudio').VramRiskEstimate>;
   videoStudioStart: () => Promise<{ ok: boolean; outputRoot: string }>;
   videoStudioStop: () => Promise<{ ok: boolean }>;
   videoStudioStats: () => Promise<import('./videoStudio').VideoStudioStats>;

@@ -209,7 +209,7 @@ export function ImageStudioPage({
     try {
       const result = await window.aiStudio.videoStudioGenerate(params);
       if (result.jobs) setGenerationJobs(result.jobs);
-      if (result.setupRequired) {
+      if (result.setupRequired || result.vramBlocked) {
         onNotify(null, result.detail || result.message);
         return;
       }

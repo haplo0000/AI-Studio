@@ -14,9 +14,24 @@ const DB_PATH = path.join(HUB_ROOT, 'registry', 'videos.sqlite');
 const COMFY_INPUT_STAGING = path.join(HUB_ROOT, 'cache', 'comfy-input');
 
 const VIDEO_WORKFLOW_CANDIDATES = [
+  path.join('C:\\AI\\StabilityMatrix', 'Data', 'Workflows', 'video', 'i2v_wan22_5b_api.json'),
+  path.join(__dirname, 'workflows', 'i2v_wan22_5b_api.json'),
   path.join('C:\\AI\\StabilityMatrix', 'Data', 'Workflows', 'video', 'i2v_wan22_api.json'),
   path.join(__dirname, 'workflows', 'i2v_wan22_api.json'),
 ];
+
+const WAN_5B_TEMPLATE_PATH = path.join(
+  'C:\\AI\\StabilityMatrix',
+  'Data',
+  'Packages',
+  'ComfyUI',
+  'venv',
+  'Lib',
+  'site-packages',
+  'comfyui_workflow_templates_media_video',
+  'templates',
+  'video_wan2_2_5B_ti2v.json',
+);
 
 const WAN_BLUEPRINT_PATH = path.join(
   'C:\\AI\\StabilityMatrix',
@@ -27,23 +42,30 @@ const WAN_BLUEPRINT_PATH = path.join(
   'Image to Video (Wan 2.2).json',
 );
 
-const REQUIRED_VIDEO_NODES = [
-  'WanImageToVideo',
+const REQUIRED_VIDEO_NODES_5B = [
+  'Wan22ImageToVideoLatent',
   'CreateVideo',
   'SaveVideo',
   'UNETLoader',
   'CLIPLoader',
   'VAELoader',
+  'KSampler',
 ];
 
-const REQUIRED_VIDEO_MODELS = [
-  { dir: 'diffusion_models', file: 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors' },
-  { dir: 'diffusion_models', file: 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors' },
-  { dir: 'loras', file: 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors' },
-  { dir: 'loras', file: 'wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors' },
+const REQUIRED_VIDEO_MODELS_5B = [
+  { dir: 'diffusion_models', file: 'wan2.2_ti2v_5B_fp16.safetensors' },
   { dir: 'text_encoders', file: 'umt5_xxl_fp8_e4m3fn_scaled.safetensors' },
-  { dir: 'vae', file: 'wan_2.1_vae.safetensors' },
+  { dir: 'vae', file: 'wan2.2_vae.safetensors' },
 ];
+
+/** Conservative limits for ~8GB VRAM (RTX 5060 Laptop). */
+const VRAM_PROFILE = {
+  id: 'wan2.2_ti2v_5b_8gb',
+  maxDim: 512,
+  maxPixels: 512 * 384,
+  maxFrames: 49,
+  label: '8GB VRAM (Wan2.2 5B)',
+};
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.gif']);
 const VIDEO_FPS = 16;
@@ -205,11 +227,25 @@ function applyWidgetValues(node, inputs) {
     case 'CLIPTextEncode':
       if (w[0] !== undefined) inputs.text = w[0];
       break;
+    case 'Wan22ImageToVideoLatent':
+      inputs.width = w[0];
+      inputs.height = w[1];
+      inputs.length = w[2];
+      inputs.batch_size = w[3] ?? 1;
+      break;
     case 'WanImageToVideo':
       inputs.width = w[0];
       inputs.height = w[1];
       inputs.length = w[2];
       inputs.batch_size = w[3] ?? 1;
+      break;
+    case 'KSampler':
+      inputs.seed = w[0];
+      inputs.steps = w[2];
+      inputs.cfg = w[3];
+      inputs.sampler_name = w[4];
+      inputs.scheduler = w[5];
+      inputs.denoise = w[6];
       break;
     case 'KSamplerAdvanced':
       inputs.add_noise = w[0];
@@ -280,6 +316,11 @@ function loadVideoWorkflowApi() {
     return JSON.parse(JSON.stringify(raw));
   }
 
+  if (fs.existsSync(WAN_5B_TEMPLATE_PATH)) {
+    const template = JSON.parse(fs.readFileSync(WAN_5B_TEMPLATE_PATH, 'utf8'));
+    if (template.nodes) return convertComfyTemplateToApi(template);
+  }
+
   if (fs.existsSync(WAN_BLUEPRINT_PATH)) {
     const blueprint = JSON.parse(fs.readFileSync(WAN_BLUEPRINT_PATH, 'utf8'));
     const subgraph = blueprint.definitions?.subgraphs?.[0];
@@ -287,6 +328,34 @@ function loadVideoWorkflowApi() {
   }
 
   return null;
+}
+
+function convertComfyTemplateToApi(template) {
+  const api = {};
+  const nodes = template.nodes || [];
+  const links = template.links || [];
+  const skipTypes = new Set(['MarkdownNote', 'Note', 'Reroute']);
+  const linkByTarget = new Map();
+
+  for (const link of links) {
+    const [id, originId, originSlot, targetId, targetSlot] = link;
+    if (!linkByTarget.has(targetId)) linkByTarget.set(targetId, []);
+    linkByTarget.get(targetId).push({ originId, originSlot, targetSlot });
+  }
+
+  for (const node of nodes) {
+    if (skipTypes.has(node.type)) continue;
+    const inputs = {};
+    for (const link of linkByTarget.get(node.id) || []) {
+      const inp = (node.inputs || [])[link.targetSlot];
+      if (!inp?.name) continue;
+      inputs[inp.name] = [String(link.originId), link.originSlot];
+    }
+    applyWidgetValues(node, inputs);
+    api[String(node.id)] = { class_type: node.type, inputs };
+  }
+
+  return api;
 }
 
 function resolveComfyInputDir(settings) {
@@ -306,12 +375,12 @@ async function checkVideoSetup(settings) {
   const base = (settings.services?.comfyui || 'http://127.0.0.1:8188').replace(/\/$/, '');
   try {
     const objectInfo = await getImageStudioBridge().getJson(`${base}/object_info`, 8000);
-    for (const nodeType of REQUIRED_VIDEO_NODES) {
+    for (const nodeType of REQUIRED_VIDEO_NODES_5B) {
       if (!objectInfo[nodeType]) {
         return {
           ready: false,
           message: 'Video model/workflow not installed yet',
-          detail: `ComfyUI node "${nodeType}" is not available. Update ComfyUI or install video nodes.`,
+          detail: `ComfyUI node "${nodeType}" is not available. Update ComfyUI to a build with Wan 2.2 5B support.`,
         };
       }
     }
@@ -325,7 +394,7 @@ async function checkVideoSetup(settings) {
 
   const modelsDir = getComfyModelsDir(settings);
   const missing = [];
-  for (const { dir, file } of REQUIRED_VIDEO_MODELS) {
+  for (const { dir, file } of REQUIRED_VIDEO_MODELS_5B) {
     const full = path.join(modelsDir, dir, file);
     if (!fs.existsSync(full)) missing.push(`${dir}/${file}`);
   }
@@ -333,12 +402,18 @@ async function checkVideoSetup(settings) {
     return {
       ready: false,
       message: 'Video model/workflow not installed yet',
-      detail: `Missing models: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}`,
+      detail: `Missing Wan2.2 5B models: ${missing.join(', ')}`,
       missingModels: missing,
     };
   }
 
-  return { ready: true, message: 'Video generation ready', workflow: 'wan2.2_i2v' };
+  return {
+    ready: true,
+    message: 'Video generation ready (Wan2.2 TI2V 5B)',
+    workflow: 'wan2.2_ti2v_5b',
+    model: 'wan2.2_ti2v_5B_fp16',
+    vramProfile: VRAM_PROFILE.label,
+  };
 }
 
 function readImageDimensions(imagePath) {
@@ -347,17 +422,70 @@ function readImageDimensions(imagePath) {
     const img = nativeImage.createFromPath(imagePath);
     const size = img.getSize();
     if (size.width > 0 && size.height > 0) {
-      const maxDim = 640;
+      const maxDim = VRAM_PROFILE.maxDim;
       const scale = Math.min(1, maxDim / Math.max(size.width, size.height));
-      return {
-        width: Math.max(64, Math.round((size.width * scale) / 16) * 16),
-        height: Math.max(64, Math.round((size.height * scale) / 16) * 16),
-      };
+      let width = Math.max(64, Math.round((size.width * scale) / 16) * 16);
+      let height = Math.max(64, Math.round((size.height * scale) / 16) * 16);
+      if (width * height > VRAM_PROFILE.maxPixels) {
+        const pixelScale = Math.sqrt(VRAM_PROFILE.maxPixels / (width * height));
+        width = Math.max(64, Math.round((width * pixelScale) / 16) * 16);
+        height = Math.max(64, Math.round((height * pixelScale) / 16) * 16);
+      }
+      return { width, height };
     }
   } catch {
     // ignore
   }
-  return { width: 640, height: 640 };
+  return { width: 512, height: 320 };
+}
+
+function estimateVramRisk(params) {
+  const dims = readImageDimensions(params.sourcePath);
+  const frameLength = durationToFrameLength(params.duration);
+  const pixels = dims.width * dims.height;
+  const workload = pixels * frameLength;
+
+  const safeWorkload = 512 * 320 * 33;
+  const warnWorkload = 512 * 384 * 49;
+  const blockWorkload = 640 * 480 * 65;
+
+  if (frameLength > VRAM_PROFILE.maxFrames || pixels > VRAM_PROFILE.maxPixels) {
+    return {
+      level: 'block',
+      message: `This settings combo (${dims.width}×${dims.height}, ${params.duration}s) is likely to exceed 8GB VRAM. Use 2s duration and keep the source image under ${VRAM_PROFILE.maxDim}px on the long edge.`,
+      dims,
+      frameLength,
+    };
+  }
+
+  if (workload > blockWorkload || params.duration >= 6) {
+    return {
+      level: 'block',
+      message: `6-second or high-resolution video may exceed 8GB VRAM on Wan2.2 5B. Try 2s at ≤${VRAM_PROFILE.maxDim}px instead.`,
+      dims,
+      frameLength,
+    };
+  }
+
+  if (workload > warnWorkload || params.duration >= 4 || params.motionStrength > 0.75) {
+    return {
+      level: 'warn',
+      message: `${params.duration}s at ${dims.width}×${dims.height} may be tight on 8GB VRAM. If generation fails, reduce duration to 2s or use a smaller source image.`,
+      dims,
+      frameLength,
+    };
+  }
+
+  if (workload > safeWorkload) {
+    return {
+      level: 'warn',
+      message: `Generation uses ${dims.width}×${dims.height} for ~${params.duration}s — within 8GB limits but close. Prefer 2s for fastest results.`,
+      dims,
+      frameLength,
+    };
+  }
+
+  return { level: 'ok', message: null, dims, frameLength };
 }
 
 async function stageImageForComfy(settings, sourcePath) {
@@ -383,35 +511,53 @@ function mutateVideoWorkflow(workflow, params) {
   const wf = JSON.parse(JSON.stringify(workflow));
   const dims = readImageDimensions(params.sourcePath);
   const frameLength = durationToFrameLength(params.duration);
-  const motionStrength = Math.min(1, Math.max(0.1, Number(params.motionStrength ?? 0.6)));
-  const cfg = 2 + motionStrength * 6;
+  const motionStrength = Math.min(1, Math.max(0.1, Number(params.motionStrength ?? 0.4)));
+  const cfg = 3 + motionStrength * 3;
 
-  if (wf.load_image) wf.load_image.inputs.image = params.inputImageName;
+  const loadImage = Object.entries(wf).find(([, n]) => n.class_type === 'LoadImage');
+  if (loadImage) loadImage[1].inputs.image = params.inputImageName;
 
-  const wanNode = Object.values(wf).find((n) => n.class_type === 'WanImageToVideo');
-  const samplers = Object.values(wf).filter((n) => n.class_type === 'KSamplerAdvanced');
+  const latentNode = Object.values(wf).find(
+    (n) => n.class_type === 'Wan22ImageToVideoLatent' || n.class_type === 'WanImageToVideo',
+  );
+  const sampler = Object.values(wf).find(
+    (n) => n.class_type === 'KSampler' || n.class_type === 'KSamplerAdvanced',
+  );
+  const samplers = sampler ? [sampler] : Object.values(wf).filter(
+    (n) => n.class_type === 'KSampler' || n.class_type === 'KSamplerAdvanced',
+  );
 
-  if (wanNode?.inputs?.positive) {
-    const posId = wanNode.inputs.positive[0];
+  if (sampler?.inputs?.positive) {
+    const posId = sampler.inputs.positive[0];
     if (wf[posId]) wf[posId].inputs.text = params.prompt;
   }
-  if (wanNode?.inputs?.negative) {
-    const negId = wanNode.inputs.negative[0];
-    if (wf[negId]) wf[negId].inputs.text = 'low quality, blurry, static, watermark, text';
+  if (sampler?.inputs?.negative) {
+    const negId = sampler.inputs.negative[0];
+    if (wf[negId]) {
+      wf[negId].inputs.text = 'low quality, blurry, static, watermark, text, oversaturated';
+    }
+  } else if (latentNode?.inputs?.positive) {
+    const posId = latentNode.inputs.positive[0];
+    if (wf[posId]) wf[posId].inputs.text = params.prompt;
+  }
+  if (latentNode?.inputs?.negative) {
+    const negId = latentNode.inputs.negative[0];
+    if (wf[negId]) {
+      wf[negId].inputs.text = 'low quality, blurry, static, watermark, text, oversaturated';
+    }
   }
 
-  if (wanNode) {
-    wanNode.inputs.width = dims.width;
-    wanNode.inputs.height = dims.height;
-    wanNode.inputs.length = frameLength;
+  if (latentNode) {
+    latentNode.inputs.width = dims.width;
+    latentNode.inputs.height = dims.height;
+    latentNode.inputs.length = frameLength;
   }
   for (const sampler of samplers) {
     sampler.inputs.cfg = cfg;
-    sampler.inputs.noise_seed = params.seed ?? Math.floor(Math.random() * 1_000_000_000);
+    sampler.inputs.seed = params.seed ?? Math.floor(Math.random() * 1_000_000_000);
   }
-  if (wf.save_video) {
-    wf.save_video.inputs.filename_prefix = params.prefix;
-  }
+  const saveVideo = Object.values(wf).find((n) => n.class_type === 'SaveVideo');
+  if (saveVideo) saveVideo.inputs.filename_prefix = params.prefix;
 
   return wf;
 }
@@ -422,6 +568,14 @@ async function queueImageToVideo(settings, params) {
     const err = new Error(setup.message);
     err.code = 'VIDEO_SETUP';
     err.detail = setup.detail;
+    throw err;
+  }
+
+  const vram = estimateVramRisk(params);
+  if (vram.level === 'block') {
+    const err = new Error('Settings may exceed 8GB VRAM');
+    err.code = 'VIDEO_VRAM';
+    err.detail = vram.message;
     throw err;
   }
 
@@ -446,8 +600,8 @@ async function queueImageToVideo(settings, params) {
     source_image_path: params.sourcePath,
     duration: params.duration,
     motion_strength: params.motionStrength,
-    workflow: setup.workflow || 'wan2.2_i2v',
-    model: 'wan2.2_i2v',
+    workflow: setup.workflow || 'wan2.2_ti2v_5b',
+    model: setup.model || 'wan2.2_ti2v_5B_fp16',
     startedAt: Date.now(),
   });
 
@@ -558,6 +712,8 @@ function stopVideoWatcher() {
 }
 
 function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
+  ipcMain.handle('video-studio:vram-risk', async (_event, params) => estimateVramRisk(params || {}));
+
   ipcMain.handle('video-studio:setup', async () => {
     const settings = loadSettings();
     return checkVideoSetup(settings);
@@ -616,6 +772,14 @@ function registerVideoStudioIpc(ipcMain, loadSettings, appendLog) {
           detail: err.detail,
         };
       }
+      if (err.code === 'VIDEO_VRAM') {
+        return {
+          ok: false,
+          vramBlocked: true,
+          message: err.message,
+          detail: err.detail,
+        };
+      }
       throw err;
     }
   });
@@ -666,4 +830,5 @@ module.exports = {
   stopVideoWatcher,
   getVideoOutputRoot,
   checkVideoSetup,
+  estimateVramRisk,
 };

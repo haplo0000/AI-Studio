@@ -32,16 +32,28 @@ Independent creations — Foundry, AI Academy, Fern & Friend, etc. — are **Wor
 
 ### Phase 4 — Video Generation MVP
 
-Image-to-video inside **Image Studio** (ComfyUI Wan 2.2 workflow):
+Image-to-video inside **Image Studio** (ComfyUI **Wan2.2 TI2V 5B** — optimized for 8GB VRAM):
 
 - **Create Video** on gallery cards and fullscreen viewer
-- Modal: motion prompt, 2s / 4s / 6s duration, motion strength slider
+- Modal: motion prompt, **2s / 4s / 6s** duration (default **2s**), motion strength slider
 - **Video Studio** section: generated clips gallery, fullscreen player, Open Folder / Reveal
 - Progress: Queued → Loading model → Generating frames → Encoding video → Complete
 - Output: `C:\AI\StabilityMatrix\Data\Videos`
 - Metadata: `C:\AI\AIStudio\registry\videos.sqlite`
 
-**Required setup (not bundled):** Wan 2.2 image-to-video models in ComfyUI (`diffusion_models`, `loras`, `text_encoders`, `vae`). If missing, AI Studio shows *Video model/workflow not installed yet* with **Open Advanced** and **Open Video Setup** — no crash.
+**Installed workflow (8GB profile):** `electron/workflows/i2v_wan22_5b_api.json` (also copied to `C:\AI\StabilityMatrix\Data\Workflows\video\`)
+
+**Required models** (Comfy-Org repackaged, ~17 GB total):
+
+| File | Folder |
+|------|--------|
+| `wan2.2_ti2v_5B_fp16.safetensors` | `ComfyUI\models\diffusion_models\` |
+| `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | `ComfyUI\models\text_encoders\` |
+| `wan2.2_vae.safetensors` | `ComfyUI\models\vae\` |
+
+Official template reference: ComfyUI → Workflow → Browse Templates → Video → **Wan2.2 5B video generation**
+
+If models are missing, AI Studio shows *Video model/workflow not installed yet*. Settings that may exceed 8GB VRAM show a warning before queueing.
 
 **Coming soon:** text-to-video, video-to-video, upscale video, extend video.
 

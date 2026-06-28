@@ -78,6 +78,7 @@ const aiStudioApi = {
     return () => ipcRenderer.removeListener('image-studio:generation-progress', handler);
   },
   videoStudioSetup: () => ipcRenderer.invoke('video-studio:setup'),
+  videoStudioVramRisk: (params) => ipcRenderer.invoke('video-studio:vram-risk', params),
   videoStudioStart: () => ipcRenderer.invoke('video-studio:start'),
   videoStudioStop: () => ipcRenderer.invoke('video-studio:stop'),
   videoStudioStats: () => ipcRenderer.invoke('video-studio:stats'),

@@ -29,14 +29,25 @@ export function CreateVideoModal({
   onOpenVideoSetup,
 }: CreateVideoModalProps) {
   const [prompt, setPrompt] = useState('');
-  const [duration, setDuration] = useState<VideoDuration>(4);
-  const [motionStrength, setMotionStrength] = useState(0.6);
+  const [duration, setDuration] = useState<VideoDuration>(2);
+  const [motionStrength, setMotionStrength] = useState(0.4);
   const [submitting, setSubmitting] = useState(false);
   const [setup, setSetup] = useState<VideoSetupStatus | null>(null);
+  const [vramWarning, setVramWarning] = useState<string | null>(null);
 
   useEffect(() => {
     void window.aiStudio.videoStudioSetup().then(setSetup);
   }, []);
+
+  useEffect(() => {
+    void window.aiStudio
+      .videoStudioVramRisk({
+        sourcePath: image.path,
+        duration,
+        motionStrength,
+      })
+      .then((risk) => setVramWarning(risk.level !== 'ok' ? risk.message : null));
+  }, [image.path, duration, motionStrength]);
 
   const previewSrc = window.aiStudio.getMediaUrl(image.path);
   const setupBlocked = setup != null && !setup.ready;
@@ -103,6 +114,12 @@ export function CreateVideoModal({
                 </button>
               </div>
             </div>
+          )}
+
+          {vramWarning && !setupBlocked && (
+            <p className="text-xs text-warning rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+              {vramWarning}
+            </p>
           )}
 
           <div className="rounded-xl border border-border overflow-hidden bg-surface-overlay/40 aspect-video flex items-center justify-center">
