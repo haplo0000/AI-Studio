@@ -13,4 +13,4 @@ End If
 
 WshShell.CurrentDirectory = repoRoot
 WshShell.Environment("Process")("AI_STUDIO_LAUNCH_MODE") = "production"
-WshShell.Run Chr(34) & batPath & Chr(34), 0, False
+WshShell.Run Chr(34) & batPath & Chr(34) & " --embedded", 0, False
