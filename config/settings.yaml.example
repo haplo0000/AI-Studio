@@ -15,7 +15,7 @@ paths:
   fern_and_friend: null
 services:
   ollama: http://127.0.0.1:11434
-  council_os: http://localhost:5173
+  council_os: http://127.0.0.1:5173
   comfyui: http://127.0.0.1:8188
 workshops:
   current: ai-studio

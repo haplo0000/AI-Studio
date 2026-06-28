@@ -3,6 +3,8 @@ const fs = require('fs');
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 180000;
+/** Council OS startup wait — matches start-council-os.bat (~45 tries × 2s) */
+const COUNCIL_POLL_TIMEOUT_MS = 90000;
 const LAUNCH_COOLDOWN_MS = 20000;
 /** Background services started automatically on AI Studio launch */
 const AUTO_START_SERVICES = ['ollama', 'comfyui'];
@@ -54,6 +56,8 @@ function createServiceStartup(deps) {
     loadSettings,
     appendLog,
     broadcastStatus,
+    getCouncilServiceUrl,
+    formatCouncilStartupFailure,
     openCouncilInBrowser,
   } = deps;
 
@@ -135,13 +139,14 @@ function createServiceStartup(deps) {
     return probeService(id);
   }
 
-  async function ensureService(id, { forceLaunch = false } = {}) {
+  async function ensureService(id, { forceLaunch = false, timeoutMs } = {}) {
+    const waitMs = timeoutMs ?? (id === 'council_os' ? COUNCIL_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS);
     const current = await probeService(id);
     if (current.status === 'green') return current;
 
     if (!forceLaunch && !canLaunch(id)) {
       if (starting.has(id)) {
-        return waitForReady(id);
+        return waitForReady(id, waitMs);
       }
       return current;
     }
@@ -149,7 +154,7 @@ function createServiceStartup(deps) {
     markLaunch(id);
     try {
       await launchService(id);
-      const ready = await waitForReady(id);
+      const ready = await waitForReady(id, waitMs);
       return ready;
     } finally {
       clearLaunch(id);
@@ -248,9 +253,31 @@ function createServiceStartup(deps) {
   }
 
   async function openCouncilOs() {
+    const settings = loadSettings();
+    const councilUrl = getCouncilServiceUrl(settings);
+
     const currentMap = {};
     for (const id of MONITORED_SERVICES) {
       currentMap[id] = await probeService(id);
+    }
+
+    const alreadyRunning = currentMap.council_os?.status === 'green';
+    if (alreadyRunning) {
+      appendLog('info', 'workstation', 'Council OS already running — opening browser', {
+        url: councilUrl,
+      });
+      try {
+        await openCouncilInBrowser();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not open Council OS';
+        appendLog('error', 'workstation', message, { url: councilUrl });
+        return {
+          ok: false,
+          message: 'Council OS is not reachable',
+          detail: formatCouncilStartupFailure(currentMap.council_os, settings),
+        };
+      }
+      return { ok: true, message: `Opened Council OS at ${councilUrl}` };
     }
 
     emitStatus({
@@ -261,12 +288,52 @@ function createServiceStartup(deps) {
       services: serviceSnapshot(currentMap),
     });
 
-    const health = await ensureService('council_os', { forceLaunch: true });
-    if (health.status !== 'green') {
-      throw new Error(health.message || 'Council OS did not become ready');
+    let health;
+    try {
+      health = await ensureService('council_os', { forceLaunch: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not start Council OS';
+      appendLog('error', 'workstation', 'Council OS launch failed', { error: message });
+      return {
+        ok: false,
+        message: 'Council OS failed to start',
+        detail: formatCouncilStartupFailure({ message }, settings),
+      };
     }
 
-    await openCouncilInBrowser();
+    if (health.status !== 'green') {
+      const detail = formatCouncilStartupFailure(health, settings);
+      appendLog('error', 'workstation', 'Council OS did not become ready', {
+        url: councilUrl,
+        message: health.message,
+      });
+      const all = await Promise.all(MONITORED_SERVICES.map((sid) => probeService(sid)));
+      const map = {};
+      for (const h of all) map[h.id] = h;
+      emitStatus({
+        phase: isWorkbenchReady(map) ? 'ready' : 'starting',
+        message: 'Council OS failed to start',
+        workbenchReady: isWorkbenchReady(map),
+        services: serviceSnapshot(map),
+      });
+      return {
+        ok: false,
+        message: 'Council OS did not respond with HTTP 200 in time',
+        detail,
+      };
+    }
+
+    try {
+      await openCouncilInBrowser();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not open Council OS';
+      appendLog('error', 'workstation', message, { url: councilUrl });
+      return {
+        ok: false,
+        message: 'Council OS started but the browser could not be opened',
+        detail: message,
+      };
+    }
 
     const all = await Promise.all(MONITORED_SERVICES.map((sid) => probeService(sid)));
     const map = {};
@@ -279,8 +346,8 @@ function createServiceStartup(deps) {
       services: serviceSnapshot(map),
     };
     emitStatus(payload);
-    appendLog('info', 'workstation', 'Council OS opened');
-    return { ok: true, message: 'Council OS opened' };
+    appendLog('info', 'workstation', 'Council OS opened', { url: councilUrl });
+    return { ok: true, message: `Opened Council OS at ${councilUrl}` };
   }
 
   async function restartComfyui() {
@@ -306,4 +373,5 @@ module.exports = {
   AUTO_START_SERVICES,
   MONITORED_SERVICES,
   STARTING_LABELS,
+  COUNCIL_POLL_TIMEOUT_MS,
 };

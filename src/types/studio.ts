@@ -109,12 +109,18 @@ export interface WorkstationStatus {
   services: Record<string, WorkstationServiceSnapshot>;
 }
 
+export interface StudioActionResult {
+  ok: boolean;
+  message: string;
+  detail?: string;
+}
+
 export interface AiStudioApi extends AiStudioImageApi {
   getBootstrap: () => Promise<BootstrapData>;
   refreshHealth: () => Promise<ServiceHealth[]>;
   getLogs: () => Promise<LogEntry[]>;
-  launchModule: (moduleId: string) => Promise<{ ok: boolean; message: string }>;
-  launchAction: (action: string) => Promise<{ ok: boolean; message: string }>;
+  launchModule: (moduleId: string) => Promise<StudioActionResult>;
+  launchAction: (action: string) => Promise<StudioActionResult>;
   openUrl: (url: string) => Promise<{ ok: boolean }>;
   setCurrentWorkshop: (workshopId: string) => Promise<{ ok: boolean; currentWorkshopId: string }>;
   openWorkshopFolder: (workshopId: string) => Promise<{ ok: boolean; message: string }>;
@@ -122,7 +128,7 @@ export interface AiStudioApi extends AiStudioImageApi {
   prepareWorkstation: () => Promise<WorkstationStatus>;
   startService: (serviceId: string) => Promise<{ ok: boolean; message: string }>;
   restartComfyui: () => Promise<{ ok: boolean; message: string }>;
-  openCouncil: () => Promise<{ ok: boolean; message: string }>;
+  openCouncil: () => Promise<StudioActionResult>;
   onWorkstationStatus: (callback: (status: WorkstationStatus) => void) => () => void;
   blacksmithCreateSession: (
     workshopId: string | null,

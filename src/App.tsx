@@ -6,6 +6,7 @@ import { HealthPanel } from './components/HealthPanel';
 import { ImageStudioPage } from './components/image-studio/ImageStudioPage';
 import { LaunchersPanel } from './components/LaunchersPanel';
 import { ServiceChip } from './components/ServiceChip';
+import { StudioErrorDialog } from './components/StudioErrorDialog';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WorkbenchDashboard } from './components/WorkbenchDashboard';
 import { StartupSplash } from './components/StartupSplash';
@@ -17,6 +18,7 @@ import type {
   BootstrapData,
   LogEntry,
   ServiceHealth,
+  StudioActionResult,
   WorkbenchView,
   WorkstationStatus,
   WorkshopEntry,
@@ -39,7 +41,20 @@ export default function App() {
   const [prepareComplete, setPrepareComplete] = useState(false);
   const [splashDismissed, setSplashDismissed] = useState(false);
   const [splashFading, setSplashFading] = useState(false);
+  const [councilErrorDialog, setCouncilErrorDialog] = useState<{
+    title: string;
+    message: string;
+    detail?: string;
+  } | null>(null);
   const logPanelRef = useRef<HTMLDivElement>(null);
+
+  const showCouncilFailure = useCallback(
+    (title: string, message: string, detail?: string) => {
+      setCouncilErrorDialog({ title, message, detail });
+      setActionError(null);
+    },
+    [],
+  );
 
   const refreshLogs = useCallback(async () => {
     if (!window.aiStudio) return;
@@ -53,6 +68,19 @@ export default function App() {
     setServices(next);
     await refreshLogs();
   }, [refreshLogs]);
+
+  const applyCouncilResult = useCallback(
+    async (result: StudioActionResult) => {
+      if (!result.ok) {
+        showCouncilFailure('Could not open Council OS', result.message, result.detail);
+        return false;
+      }
+      setActionMessage(result.message);
+      await refreshHealth();
+      return true;
+    },
+    [refreshHealth, showCouncilFailure],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -120,8 +148,12 @@ export default function App() {
     setActionMessage(null);
     try {
       const result = await window.aiStudio.launchModule(moduleId);
-      setActionMessage(result.message);
-      await refreshHealth();
+      if (moduleId === 'council-os') {
+        await applyCouncilResult(result);
+      } else {
+        setActionMessage(result.message);
+        await refreshHealth();
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Launch failed');
     } finally {
@@ -135,10 +167,23 @@ export default function App() {
     setActionMessage(null);
     try {
       const result = await window.aiStudio.launchAction(action);
-      setActionMessage(result.message);
-      await refreshHealth();
+      if (action === 'open-council') {
+        await applyCouncilResult(result);
+      } else {
+        setActionMessage(result.message);
+        await refreshHealth();
+      }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Action failed');
+      if (action === 'open-council') {
+        const error = err as Error & { detail?: string };
+        showCouncilFailure(
+          'Could not open Council OS',
+          error.message || 'Action failed',
+          error.detail,
+        );
+      } else {
+        setActionError(err instanceof Error ? err.message : 'Action failed');
+      }
     } finally {
       setBusy(false);
     }
@@ -148,8 +193,18 @@ export default function App() {
     setActionError(null);
     try {
       await window.aiStudio.openUrl(url);
+      await refreshHealth();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Could not open URL');
+      const error = err as Error & { detail?: string };
+      if (error.detail) {
+        showCouncilFailure(
+          'Could not open Council OS',
+          error.message || 'Could not open URL',
+          error.detail,
+        );
+      } else {
+        setActionError(error.message || 'Could not open URL');
+      }
     }
   };
 
@@ -284,10 +339,14 @@ export default function App() {
     setActionMessage(null);
     try {
       const result = await window.aiStudio.openCouncil();
-      setActionMessage(result.message);
-      await refreshHealth();
+      await applyCouncilResult(result);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Could not open Council OS');
+      const error = err as Error & { detail?: string };
+      showCouncilFailure(
+        'Could not open Council OS',
+        error.message || 'Could not open Council OS',
+        error.detail,
+      );
     } finally {
       setWorkstationBusy(false);
     }
@@ -505,6 +564,15 @@ export default function App() {
         <span>Hub: C:\AI\AIStudio</span>
         <span>Phase 4 · Video MVP</span>
       </footer>
+
+      {councilErrorDialog && (
+        <StudioErrorDialog
+          title={councilErrorDialog.title}
+          message={councilErrorDialog.message}
+          detail={councilErrorDialog.detail}
+          onClose={() => setCouncilErrorDialog(null)}
+        />
+      )}
     </div>
       )}
     </div>

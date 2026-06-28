@@ -22,6 +22,13 @@ const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 const blacksmith = require('./blacksmith.cjs');
 const { createServiceStartup } = require('./serviceStartup.cjs');
+const {
+  getCouncilServiceUrl,
+  isCouncilServiceUrl,
+  getCouncilViteLogPath,
+  formatCouncilStartupFailure,
+} = require('./councilConfig.cjs');
+const { probeCouncilReady } = require('./councilProbe.cjs');
 const { installApplicationMenu, attachEditableContextMenu } = require('./applicationMenu.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
@@ -257,8 +264,8 @@ async function checkComfyui(settings) {
 }
 
 async function checkCouncilOs(settings) {
-  const base = settings.services?.council_os || 'http://localhost:5173';
-  const result = await probeUrl(base);
+  const base = getCouncilServiceUrl(settings);
+  const result = await probeCouncilReady(base);
   return {
     id: 'council_os',
     label: 'Council OS',
@@ -382,6 +389,10 @@ function launchCouncilOsSilent() {
     throw new Error(`Council OS not found at ${councilDir}`);
   }
 
+  const viteLog = getCouncilViteLogPath();
+  fs.mkdirSync(path.dirname(viteLog), { recursive: true });
+  const devCmd = `cd /d "${councilDir}" && npm run dev >> "${viteLog}" 2>&1`;
+
   if (isDeveloperLaunchMode()) {
     spawnDetached('cmd.exe', [
       '/c',
@@ -390,13 +401,15 @@ function launchCouncilOsSilent() {
       'Council OS Dev Server',
       'cmd',
       '/c',
-      `cd /d "${councilDir}" && npm run dev`,
+      devCmd,
     ]).unref();
   } else {
-    spawnDetached('cmd.exe', ['/c', `cd /d "${councilDir}" && npm run dev`]).unref();
+    spawnDetached('cmd.exe', ['/c', devCmd], { env: process.env }).unref();
   }
   appendLog('info', 'launch', 'Started Council OS dev server (silent)', {
     path: councilDir,
+    url: getCouncilServiceUrl(settings),
+    viteLog,
     hidden: !isDeveloperLaunchMode(),
   });
 }
@@ -479,7 +492,11 @@ function launchComfyui() {
 
 async function openCouncilInBrowser() {
   const settings = loadSettings();
-  const url = settings.services?.council_os || 'http://localhost:5173';
+  const url = getCouncilServiceUrl(settings);
+  const ready = await probeCouncilReady(url);
+  if (!ready.ok) {
+    throw new Error(`Council OS is not responding at ${url} (${ready.error || 'not ready'})`);
+  }
   await shell.openExternal(url);
   appendLog('info', 'launch', 'Opened Council OS', { url });
 }
@@ -496,6 +513,8 @@ function initServiceStartup() {
     resolvePathKey,
     loadSettings,
     appendLog,
+    getCouncilServiceUrl,
+    formatCouncilStartupFailure,
     openCouncilInBrowser,
     broadcastStatus: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -764,6 +783,17 @@ ipcMain.handle('studio:launch-action', async (_event, action) => {
 });
 
 ipcMain.handle('studio:open-url', async (_event, url) => {
+  const settings = loadSettings();
+  if (isCouncilServiceUrl(settings, url)) {
+    if (!serviceStartup) throw new Error('Workstation services not initialized');
+    const result = await serviceStartup.openCouncilOs();
+    if (!result.ok) {
+      const err = new Error(result.message);
+      err.detail = result.detail;
+      throw err;
+    }
+    return result;
+  }
   await shell.openExternal(url);
   return { ok: true };
 });
@@ -838,7 +868,13 @@ ipcMain.handle('blacksmith:send-to-council', async (_event, sessionId) => {
 
   if (serviceStartup) {
     try {
-      await serviceStartup.openCouncilOs();
+      const result = await serviceStartup.openCouncilOs();
+      if (!result.ok) {
+        appendLog('warn', 'blacksmith', 'Council OS open failed after brief', {
+          error: result.message,
+          detail: result.detail,
+        });
+      }
     } catch (err) {
       appendLog('warn', 'blacksmith', 'Council OS open failed after brief', { error: err.message });
     }
