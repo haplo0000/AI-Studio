@@ -50,6 +50,7 @@ function ThumbnailCell({
         <MiniBtn label="Reveal" onClick={() => onAction('reveal', image)} />
         <MiniBtn label="Viewer" onClick={() => onAction('viewer', image)} />
         <MiniBtn label="Edit" onClick={() => onAction('edit', image)} />
+        <MiniBtn label="Video" onClick={() => onAction('create-video', image)} />
         <MiniBtn label="Upscale" onClick={() => onAction('upscale', image)} />
         <MiniBtn label="Vary" onClick={() => onAction('variations', image)} />
         <MiniBtn label="Prompt" onClick={() => onAction('copy-prompt', image)} />

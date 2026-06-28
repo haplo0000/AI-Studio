@@ -113,10 +113,11 @@ export const WORKBENCH_SECTIONS: WorkbenchSection[] = [
       {
         id: 'video',
         name: 'Video',
-        description: 'Video generation workspace',
+        description: 'Image-to-video in Image Studio (text-to-video coming soon)',
         icon: '🎬',
-        kind: 'placeholder',
-        placeholder: true,
+        kind: 'navigate',
+        target: 'image-studio',
+        serviceId: 'comfyui',
       },
       {
         id: 'voice',

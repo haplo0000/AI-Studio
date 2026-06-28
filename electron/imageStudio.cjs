@@ -92,6 +92,7 @@ function serializeGenerationJobs() {
     promptId: job.promptId,
     prefix: job.prefix,
     label: job.label,
+    kind: job.kind || 'image',
     status: job.status,
     phase: job.phase,
     progress: job.progress,
@@ -110,21 +111,23 @@ function broadcastGenerationProgress() {
   }
 }
 
-function registerGenerationJob({ promptId, prefix, label, batchIndex, batchTotal }) {
+function registerGenerationJob({ promptId, prefix, label, batchIndex, batchTotal, kind = 'image' }) {
   const id = crypto.randomUUID();
   const job = {
     id,
     promptId,
     prefix,
     label,
+    kind,
     status: 'queued',
-    phase: 'Waiting for ComfyUI…',
+    phase: kind === 'video' ? 'Queued' : 'Waiting for ComfyUI…',
     progress: null,
     startedAt: Date.now(),
     completedAt: null,
     error: null,
     batchIndex: batchIndex ?? null,
     batchTotal: batchTotal ?? null,
+    _modelLoaded: false,
   };
   generationJobs.set(id, job);
   promptIdToJobId.set(promptId, id);
@@ -150,7 +153,7 @@ function markGenerationJobSaving(promptId) {
   const job = generationJobs.get(jobId);
   if (!job || job.status === 'complete' || job.status === 'error') return;
   job.status = 'saving';
-  job.phase = 'Saving image…';
+  job.phase = job.kind === 'video' ? 'Encoding video…' : 'Saving image…';
   job.progress = null;
   broadcastGenerationProgress();
 }
@@ -197,7 +200,7 @@ function handleComfyWsMessage(raw) {
 
   if (type === 'progress' && data.max > 0) {
     job.status = 'running';
-    job.phase = 'Generating…';
+    job.phase = job.kind === 'video' ? 'Generating frames…' : 'Generating…';
     job.progress = Math.min(100, Math.round((data.value / data.max) * 100));
     broadcastGenerationProgress();
     return;
@@ -206,7 +209,12 @@ function handleComfyWsMessage(raw) {
   if (type === 'executing') {
     if (data.node) {
       job.status = 'running';
-      job.phase = 'Generating…';
+      if (job.kind === 'video' && !job._modelLoaded) {
+        job.phase = 'Loading model…';
+        job._modelLoaded = true;
+      } else {
+        job.phase = job.kind === 'video' ? 'Generating frames…' : 'Generating…';
+      }
       broadcastGenerationProgress();
     } else {
       markGenerationJobSaving(data.prompt_id);
@@ -261,16 +269,21 @@ async function pollComfyProgress(base) {
       if (job.status === 'complete' || job.status === 'error') continue;
       if (pendingIds.has(job.promptId)) {
         job.status = 'queued';
-        job.phase = 'Waiting for ComfyUI…';
+        job.phase = job.kind === 'video' ? 'Queued' : 'Waiting for ComfyUI…';
         job.progress = null;
       } else if (runningIds.has(job.promptId)) {
         if (job.status !== 'saving') {
           job.status = 'running';
-          job.phase = 'Generating…';
+          if (job.kind === 'video') {
+            job.phase = job._modelLoaded ? 'Generating frames…' : 'Loading model…';
+            if (!job._modelLoaded) job._modelLoaded = true;
+          } else {
+            job.phase = 'Generating…';
+          }
         }
       } else if (job.status === 'queued' || job.status === 'running') {
         job.status = 'saving';
-        job.phase = 'Saving image…';
+        job.phase = job.kind === 'video' ? 'Encoding video…' : 'Saving image…';
         job.progress = null;
       }
     }
@@ -1445,4 +1458,16 @@ module.exports = {
   stopWatcher,
   getOutputRoot,
   initDb,
+  registerGenerationJob,
+  ensureComfyProgressMonitor,
+  serializeGenerationJobs,
+  broadcastGenerationProgress,
+  markGenerationJobError,
+  markGenerationJobCompleteForPrefix,
+  postJson,
+  getJson,
+  stageSourceImage,
+  uploadImageToComfyFromStaged,
+  resolveComfyInputDir,
+  COMFY_CLIENT_ID,
 };

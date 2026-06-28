@@ -30,6 +30,21 @@ When Council marks a brief `needs-work`, return to the originating Blacksmith se
 
 Independent creations — Foundry, AI Academy, Fern & Friend, etc. — are **Workshops**, not components of AI Studio. Configure in `settings.yaml` → `workshops.entries`.
 
+### Phase 4 — Video Generation MVP
+
+Image-to-video inside **Image Studio** (ComfyUI Wan 2.2 workflow):
+
+- **Create Video** on gallery cards and fullscreen viewer
+- Modal: motion prompt, 2s / 4s / 6s duration, motion strength slider
+- **Video Studio** section: generated clips gallery, fullscreen player, Open Folder / Reveal
+- Progress: Queued → Loading model → Generating frames → Encoding video → Complete
+- Output: `C:\AI\StabilityMatrix\Data\Videos`
+- Metadata: `C:\AI\AIStudio\registry\videos.sqlite`
+
+**Required setup (not bundled):** Wan 2.2 image-to-video models in ComfyUI (`diffusion_models`, `loras`, `text_encoders`, `vae`). If missing, AI Studio shows *Video model/workflow not installed yet* with **Open Advanced** and **Open Video Setup** — no crash.
+
+**Coming soon:** text-to-video, video-to-video, upscale video, extend video.
+
 ### Phase 3.5 — Image Studio UX
 
 AI Studio is the primary image interface. ComfyUI executes in the background.

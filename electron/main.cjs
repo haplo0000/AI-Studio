@@ -25,6 +25,7 @@ const { createServiceStartup } = require('./serviceStartup.cjs');
 
 const ALLOWED_MEDIA_ROOTS = [
   'C:\\AI\\StabilityMatrix\\Data\\Images',
+  'C:\\AI\\StabilityMatrix\\Data\\Videos',
   'C:\\AI\\AIStudio',
 ];
 
@@ -73,6 +74,10 @@ const MEDIA_MIME_BY_EXT = {
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.bmp': 'image/bmp',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
 };
 
 function resolveMediaFilePath(requestUrl) {
@@ -89,6 +94,10 @@ function resolveMediaFilePath(requestUrl) {
 
 function getMediaMimeType(filePath) {
   return MEDIA_MIME_BY_EXT[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+}
+
+function getVideoStudio() {
+  return require('./videoStudio.cjs');
 }
 
 function getImageStudio() {
@@ -583,8 +592,9 @@ app.whenReady().then(() => {
   });
 
   getImageStudio().registerImageStudioIpc(ipcMain, loadSettings, appendLog);
+  getVideoStudio().registerVideoStudioIpc(ipcMain, loadSettings, appendLog);
   initServiceStartup();
-  appendLog('info', 'studio', 'AI Studio started (Phase 3.5 Image Studio)');
+  appendLog('info', 'studio', 'AI Studio started (Phase 4 Video MVP)');
   createWindow();
 });
 
@@ -593,6 +603,11 @@ app.on('will-quit', () => {
     getImageStudio().stopWatcher();
   } catch {
     // image studio module not loaded
+  }
+  try {
+    getVideoStudio().stopVideoWatcher();
+  } catch {
+    // video studio module not loaded
   }
 });
 

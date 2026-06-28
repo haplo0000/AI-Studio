@@ -131,6 +131,7 @@ export function ImageViewerModal({
         <ViewerBtn label="Copy Image" onClick={() => onAction('copy-image', image)} />
         <ViewerBtn label="Copy Prompt" onClick={() => onAction('copy-prompt', image)} />
         <ViewerBtn label="Edit" onClick={() => onAction('edit', image)} />
+        <ViewerBtn label="Create Video" onClick={() => onAction('create-video', image)} />
         <ViewerBtn label="Upscale" onClick={() => onAction('upscale', image)} />
         <ViewerBtn label="Variations" onClick={() => onAction('variations', image)} />
         <ViewerBtn label="Blacksmith" onClick={() => onAction('blacksmith', image)} />

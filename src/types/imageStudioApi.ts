@@ -40,4 +40,15 @@ export interface AiStudioImageApi {
   getMediaUrl: (filePath: string) => string;
   onImageStudioChanged: (callback: (event: ImageStudioChangeEvent) => void) => () => void;
   onGenerationProgress: (callback: (event: GenerationProgressEvent) => void) => () => void;
+  videoStudioSetup: () => Promise<import('./videoStudio').VideoSetupStatus>;
+  videoStudioStart: () => Promise<{ ok: boolean; outputRoot: string }>;
+  videoStudioStop: () => Promise<{ ok: boolean }>;
+  videoStudioStats: () => Promise<import('./videoStudio').VideoStudioStats>;
+  videoStudioList: (opts?: { offset?: number; limit?: number }) => Promise<import('./videoStudio').VideoRecord[]>;
+  videoStudioGenerate: (params: import('./videoStudio').CreateVideoParams) => Promise<import('./videoStudio').CreateVideoResult>;
+  videoStudioReveal: (filePath: string) => Promise<{ ok: boolean }>;
+  videoStudioOpenFolder: (folderPath?: string) => Promise<{ ok: boolean }>;
+  videoStudioOpenViewer: (filePath: string) => Promise<{ ok: boolean }>;
+  videoStudioOpenSetup: () => Promise<{ ok: boolean; path: string }>;
+  onVideoStudioChanged: (callback: (event: import('./videoStudio').VideoStudioChangeEvent) => void) => () => void;
 }

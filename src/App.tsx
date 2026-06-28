@@ -503,7 +503,7 @@ export default function App() {
 
       <footer className="shrink-0 border-t border-border-subtle px-4 py-2 text-xs text-text-muted flex justify-between">
         <span>Hub: C:\AI\AIStudio</span>
-        <span>Phase 3.5 · Image Studio</span>
+        <span>Phase 4 · Video MVP</span>
       </footer>
     </div>
       )}

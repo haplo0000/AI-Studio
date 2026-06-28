@@ -40,6 +40,7 @@ export interface GenerationJobState {
   promptId: string;
   prefix: string;
   label: string;
+  kind?: 'image' | 'video';
   status: GenerationJobStatus;
   phase: string;
   progress: number | null;

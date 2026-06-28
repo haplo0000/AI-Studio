@@ -7,11 +7,13 @@ import type {
   ImageStudioStats,
 } from '../../types/imageStudio';
 import { EditImageModal } from './EditImageModal';
+import { CreateVideoModal } from './CreateVideoModal';
 import { GeneratePanel } from './GeneratePanel';
 import { GenerationProgress } from './GenerationProgress';
 import { ImageGallery } from './ImageGallery';
 import { ImageViewerModal } from './ImageViewerModal';
 import { OutputLocationCard } from './OutputLocationCard';
+import { VideoStudioSection } from './VideoStudioSection';
 
 const PAGE_SIZE = 60;
 
@@ -41,6 +43,7 @@ export function ImageStudioPage({
   const [generationJobs, setGenerationJobs] = useState<GenerationJobState[]>([]);
   const [progressNow, setProgressNow] = useState(() => Date.now());
   const [editImage, setEditImage] = useState<ImageRecord | null>(null);
+  const [videoSourceImage, setVideoSourceImage] = useState<ImageRecord | null>(null);
 
   const isGenerating = generationJobs.some(
     (job) => job.status === 'queued' || job.status === 'running' || job.status === 'saving',
@@ -145,6 +148,10 @@ export function ImageStudioPage({
           setViewerIndex(null);
           setEditImage(image);
           break;
+        case 'create-video':
+          setViewerIndex(null);
+          setVideoSourceImage(image);
+          break;
         case 'reveal':
           await window.aiStudio.imageStudioReveal(image.path);
           break;
@@ -192,6 +199,28 @@ export function ImageStudioPage({
     }
   };
 
+  const handleVideoSubmit = async (params: {
+    sourcePath: string;
+    prompt: string;
+    duration: 2 | 4 | 6;
+    motionStrength: number;
+  }) => {
+    onNotify(null, null);
+    try {
+      const result = await window.aiStudio.videoStudioGenerate(params);
+      if (result.jobs) setGenerationJobs(result.jobs);
+      if (result.setupRequired) {
+        onNotify(null, result.detail || result.message);
+        return;
+      }
+      setVideoSourceImage(null);
+      onNotify(result.message);
+    } catch (err) {
+      onNotify(null, err instanceof Error ? err.message : 'Video generation failed');
+      throw err;
+    }
+  };
+
   const handleDelete = async (image: ImageRecord) => {
     try {
       await window.aiStudio.imageStudioDelete(image.path);
@@ -236,6 +265,8 @@ export function ImageStudioPage({
 
         <GenerationProgress jobs={generationJobs} now={progressNow} />
 
+        <VideoStudioSection onNotify={onNotify} />
+
         <input
           type="search"
           value={search}
@@ -273,6 +304,18 @@ export function ImageStudioPage({
           onClose={() => setEditImage(null)}
           onSubmit={handleEditSubmit}
           onOpenAdvanced={onOpenAdvanced}
+        />
+      )}
+
+      {videoSourceImage && (
+        <CreateVideoModal
+          image={videoSourceImage}
+          comfyuiHealthy={comfyuiHealthy}
+          busy={busy || isGenerating}
+          onClose={() => setVideoSourceImage(null)}
+          onSubmit={handleVideoSubmit}
+          onOpenAdvanced={onOpenAdvanced}
+          onOpenVideoSetup={() => void window.aiStudio.videoStudioOpenSetup()}
         />
       )}
     </div>

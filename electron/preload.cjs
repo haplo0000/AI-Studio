@@ -77,6 +77,21 @@ const aiStudioApi = {
     ipcRenderer.on('image-studio:generation-progress', handler);
     return () => ipcRenderer.removeListener('image-studio:generation-progress', handler);
   },
+  videoStudioSetup: () => ipcRenderer.invoke('video-studio:setup'),
+  videoStudioStart: () => ipcRenderer.invoke('video-studio:start'),
+  videoStudioStop: () => ipcRenderer.invoke('video-studio:stop'),
+  videoStudioStats: () => ipcRenderer.invoke('video-studio:stats'),
+  videoStudioList: (opts) => ipcRenderer.invoke('video-studio:list', opts),
+  videoStudioGenerate: (params) => ipcRenderer.invoke('video-studio:generate', params),
+  videoStudioReveal: (filePath) => ipcRenderer.invoke('video-studio:reveal', filePath),
+  videoStudioOpenFolder: (folderPath) => ipcRenderer.invoke('video-studio:open-folder', folderPath),
+  videoStudioOpenViewer: (filePath) => ipcRenderer.invoke('video-studio:open-viewer', filePath),
+  videoStudioOpenSetup: () => ipcRenderer.invoke('video-studio:open-setup'),
+  onVideoStudioChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('video-studio:changed', handler);
+    return () => ipcRenderer.removeListener('video-studio:changed', handler);
+  },
 };
 
 try {
