@@ -8,21 +8,6 @@ const ID = 'comfyui';
 const LABEL = 'ComfyUI';
 const PORT = 8188;
 
-const COMFYUI_OPTIMIZED_ARGS = [
-  '-u',
-  'main.py',
-  '--preview-method',
-  'auto',
-  '--use-pytorch-cross-attention',
-  '--enable-manager',
-  '--cuda-malloc',
-  '--bf16-unet',
-  '--bf16-text-enc',
-  '--fast',
-  'fp16_accumulation',
-  'autotune',
-];
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -32,19 +17,6 @@ function createComfyuiService({ loadSettings, resolvePathKey, appendLog, repoRoo
 
   function getBaseUrl(settings) {
     return settings?.services?.comfyui || 'http://127.0.0.1:8188';
-  }
-
-  function resolveComfyuiInstall(settings) {
-    const comfyDir =
-      resolvePathKey(settings, 'paths.comfyui') ||
-      path.join(
-        resolvePathKey(settings, 'paths.stability_matrix') || 'C:\\AI\\StabilityMatrix',
-        'Data',
-        'Packages',
-        'ComfyUI',
-      );
-    const python = path.join(comfyDir, 'venv', 'Scripts', 'python.exe');
-    return { comfyDir, python };
   }
 
   function launchScriptVisible(scriptPath, label) {
@@ -120,21 +92,8 @@ function createComfyuiService({ loadSettings, resolvePathKey, appendLog, repoRoo
         throw new Error('ComfyUI optimized launcher not found in settings.yaml');
       }
 
-      const { comfyDir, python } = resolveComfyuiInstall(settings);
-      if (fs.existsSync(python) && fs.existsSync(path.join(comfyDir, 'main.py'))) {
-        spawnDetached(python, COMFYUI_OPTIMIZED_ARGS, {
-          cwd: comfyDir,
-          env: {
-            ...process.env,
-            PYTHONUNBUFFERED: '1',
-            PYTORCH_CUDA_ALLOC_CONF: 'expandable_segments:True',
-          },
-        }).unref();
-        appendLog('info', 'service', 'Started ComfyUI directly (hidden)', { python, cwd: comfyDir });
-        lastError = null;
-        return { ok: true };
-      }
-
+      // Always use VBS wrapper in production — direct python.exe spawn creates a
+      // visible Windows Terminal window on Windows 11 regardless of windowsHide.
       launchComfyuiHiddenWrapper(settings);
       lastError = null;
       return { ok: true };
