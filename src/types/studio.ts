@@ -12,7 +12,9 @@ export type WorkbenchView =
   | 'settings'
   | 'logs'
   | 'health'
-  | 'launchers';
+  | 'launchers'
+  | 'idea'
+  | 'projects';
 
 export interface ServiceHealth {
   id: string;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityLog } from './components/ActivityLog';
+import { IdeaPipelineWorkspace } from './departments/pipeline/IdeaPipelineWorkspace';
+import { ArtifactBrowser } from './projects/ArtifactBrowser';
 import { BlacksmithWorkspace } from './components/BlacksmithWorkspace';
 import { CurrentWorkshopSelector } from './components/CurrentWorkshopSelector';
 import { ServiceDiagnosticsPanel } from './components/ServiceDiagnosticsPanel';
@@ -34,6 +36,7 @@ export default function App() {
   const [workshops, setWorkshops] = useState<WorkshopEntry[]>([]);
   const [currentWorkshopId, setCurrentWorkshopId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkbenchView>('blacksmith');
+  const [ideaSessionId, setIdeaSessionId] = useState<string | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -468,6 +471,24 @@ export default function App() {
           {activeView === 'blacksmith' && (
             <button
               type="button"
+              onClick={() => { setIdeaSessionId(undefined); setActiveView('idea'); }}
+              className="text-xs px-3 py-1.5 rounded-full border border-accent/40 text-accent hover:bg-accent/10"
+            >
+              💡 New Idea
+            </button>
+          )}
+          {activeView === 'blacksmith' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('projects')}
+              className="text-xs px-3 py-1.5 rounded-full border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
+            >
+              My Projects
+            </button>
+          )}
+          {activeView === 'blacksmith' && (
+            <button
+              type="button"
               onClick={() => setActiveView('image-studio')}
               className="text-xs px-3 py-1.5 rounded-full border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
             >
@@ -479,6 +500,24 @@ export default function App() {
               type="button"
               onClick={() => setActiveView('blacksmith')}
               className="text-xs px-3 py-1.5 rounded-full border border-accent/40 text-accent hover:bg-accent/10"
+            >
+              ← Blacksmith
+            </button>
+          )}
+          {activeView === 'idea' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('blacksmith')}
+              className="text-xs px-3 py-1.5 rounded-full border border-accent/40 text-accent hover:bg-accent/10"
+            >
+              ← Blacksmith
+            </button>
+          )}
+          {activeView === 'projects' && (
+            <button
+              type="button"
+              onClick={() => setActiveView('blacksmith')}
+              className="text-xs px-3 py-1.5 rounded-full border border-border text-text-muted hover:text-text-primary hover:bg-surface-overlay"
             >
               ← Blacksmith
             </button>
@@ -564,6 +603,22 @@ export default function App() {
               }}
               onSendToBlacksmith={handleSendToBlacksmith}
               onOpenAdvanced={() => void handleAction('open-comfyui')}
+            />
+          )}
+          {activeView === 'idea' && (
+            <IdeaPipelineWorkspace
+              currentWorkshopId={currentWorkshopId}
+              ollamaHealthy={ollamaHealthy}
+              model={bootstrap.settings.blacksmith?.model}
+              initialSessionId={ideaSessionId}
+            />
+          )}
+          {activeView === 'projects' && (
+            <ArtifactBrowser
+              onNewIdea={(sessionId) => {
+                setIdeaSessionId(sessionId);
+                setActiveView('idea');
+              }}
             />
           )}
           {activeView === 'workbench' && (
